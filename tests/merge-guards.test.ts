@@ -26,7 +26,6 @@ import {
 import { guardRegistry, type GuardInput } from "@/lib/service/state-machine/guard";
 import {
   defineOperation,
-  isServiceError,
   prismaTransactionRunner,
   ServiceRuntime,
 } from "@/lib/service";
@@ -170,6 +169,26 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     });
   }
 
+  /**
+   * The pass-plus-nudge pair every converted process-guard test asserts.
+   * **The state read is the load-bearing half and happens here, once**: a
+   * merge that carries a warning but does not actually land is the old
+   * refusal wearing a friendlier name, so every test that expects a nudge
+   * also proves the row reached `merged`. Returns the nudges so each test
+   * pins its own branch's message.
+   */
+  async function mergedWithNudges(
+    itemId: string,
+    reg: GuardRegistry,
+    fields?: Record<string, unknown>,
+  ): Promise<{ guard: string; message: string }[]> {
+    const applied = (await callTransition(itemId, "merged", reg, fields)) as {
+      nudges: { guard: string; message: string }[];
+    };
+    expect(await readState(itemId)).toBe("merged");
+    return applied.nudges;
+  }
+
   describe("registration — canonical service/guards convention, no parallel mechanism", () => {
     it("registers all five merge guards into the shared guardRegistry, exactly once", () => {
       expect(guardRegistry.has("merge.requires_commit")).toBe(true);
@@ -211,17 +230,18 @@ describeIfDb("merge guards (#18), against Postgres", () => {
   });
 
   describe("criterion 1 — merge.requires_commit", () => {
-    it("REFUSES: no commit artifact at all", async () => {
+    it("NUDGES: no commit artifact at all — the merge lands and names the gap", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresCommitGuard);
       const id = await createTask({ state: "in_review" });
-      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      const rejected = error as { guard?: string; message?: string; fields?: readonly string[] };
-      expect(rejected.guard).toBe("merge.requires_commit");
-      expect(rejected.message).toMatch(/No commit_sha recorded/);
-      expect(rejected.fields).toEqual(["state"]);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_commit");
+      expect(nudges[0]?.message).toMatch(/No commit_sha recorded/);
+      // Proof can ride the next call: both spellings silence this warning,
+      // which is why the nudge message itself names them.
+      expect(nudges[0]?.message).toContain("merge_proof");
+      expect(nudges[0]?.message).toContain("skip_proof");
     });
 
     it("ALLOWS: a commit artifact exists", async () => {
@@ -229,34 +249,62 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       reg.register(mergeRequiresCommitGuard);
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-a" });
-      await callTransition(id, "merged", reg);
+      const applied = (await callTransition(id, "merged", reg)) as {
+        nudges: unknown[];
+      };
       expect(await readState(id)).toBe("merged");
+      expect(applied.nudges).toEqual([]);
+    });
+
+    it("ALLOWS silently: proof on the call is an engaged decision, not a gap", async () => {
+      // The two cheap-proof spellings, asserted at the guard the keys exist
+      // for: with `merge_proof` (a sentence or the PR title) or an explicit
+      // `skip_proof: true`, the merge lands with NOTHING to fix — the
+      // caller has already stated the proof position, so a warning would
+      // be noise. And `skip_proof` must be exactly `true`: a truthy typo
+      // is not a decision, and nudging for it is what keeps that honest.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresCommitGuard);
+      const withProof = await createTask({ state: "in_review" });
+      const proofed = (await callTransition(withProof, "merged", reg, {
+        merge_proof: "PR #4111: rate limit on the public endpoint",
+      })) as { nudges: unknown[] };
+      expect(await readState(withProof)).toBe("merged");
+      expect(proofed.nudges).toEqual([]);
+
+      const skipping = await createTask({ state: "in_review" });
+      const skipped = (await callTransition(skipping, "merged", reg, {
+        skip_proof: true,
+      })) as { nudges: unknown[] };
+      expect(await readState(skipping)).toBe("merged");
+      expect(skipped.nudges).toEqual([]);
+
+      const typo = await createTask({ state: "in_review" });
+      const nudges = await mergedWithNudges(typo, reg, { skip_proof: "true" });
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_commit");
     });
   });
 
   describe("criterion 2 — merge.requires_approving_code_review", () => {
-    it("REFUSES: no code_review artifact at all", async () => {
+    it("NUDGES: no code_review artifact at all — merged with the gap named", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresApprovingCodeReviewGuard);
       const id = await createTask({ state: "in_review" });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-        fields?: readonly string[];
-      };
-      expect(error.guard).toBe("merge.requires_approving_code_review");
-      expect(error.message).toMatch(/No approved code_review artifact/);
-      expect(error.fields).toEqual(["state"]);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+      expect(nudges[0]?.message).toMatch(/No approved code_review artifact/);
     });
 
-    it("REFUSES: a code_review artifact whose verdict is changes_required, not approved", async () => {
+    it("NUDGES: a code_review artifact whose verdict is changes_required, not approved", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresApprovingCodeReviewGuard);
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "code_review", verdict: "changes_required" });
-      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("merge.requires_approving_code_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
     });
 
     it("ALLOWS: an approved code_review artifact at round 1 (the default/only round)", async () => {
@@ -273,7 +321,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("REFUSES: an approval recorded for an earlier review round — the item has since moved to a new round", async () => {
+    it("NUDGES: an approval recorded for an earlier review round — merged, with the drift named", async () => {
       // The load-bearing test for the round-currency clause: round 1 was
       // approved, then a fresh artifact (e.g. a re-requested review) landed
       // at round 2, advancing max(review_round) for the item. The round-1
@@ -295,24 +343,19 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         reviewRound: 2,
       });
 
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-        fields?: readonly string[];
-      };
-      expect(error.guard).toBe("merge.requires_approving_code_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
       // The VERDICT is what this test is for — a genuine re-review at a
       // higher round outranks the earlier approval, which is the whole point
       // of the round-currency clause. The wording assertions below only
-      // require the refusal to name the round limb explicitly, since a
+      // require the warning to name the round limb explicitly, since a
       // sentence that describes a round mismatch and a sha mismatch in the
       // same words identifies neither.
-      expect(error.message).toMatch(/review round 2/);
-      expect(error.message).toMatch(/round 1/);
+      expect(nudges[0]?.message).toMatch(/review round 2/);
+      expect(nudges[0]?.message).toMatch(/round 1/);
       // And it must not call this staleness — nothing about the commit moved.
-      expect(error.message).toContain("NOT staleness");
-      expect(error.fields).toEqual(["state"]);
-      expect(await readState(id)).toBe("in_review");
+      expect(nudges[0]?.message).toContain("NOT staleness");
     });
 
     // ── The round limb names WHICH artifact kind moved the round ─────────
@@ -326,12 +369,12 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     // is not — the ROUND conjunct failed, and the sha was never compared at
     // all. Seven separate investigations went that way.
     //
-    // The verdict here is deliberately unchanged: this still REFUSES, and it
-    // should, because cross-kind round drift is the mechanism by which a
-    // higher-round verification demotes a dead-follow-up lgtm_with_followups.
-    // What this test pins is that the refusal now says which limb failed and
-    // names the kind that did it.
-    it("REFUSES on the ROUND limb and names the artifact kind that moved the round — a check_run demoting a matching review", async () => {
+    // The verdict deliberately still speaks: cross-kind round drift is the
+    // mechanism by which a higher-round verification demotes a dead-follow-up
+    // lgtm_with_followups, and the merge gate still needs to say so. What
+    // this test pins is that the warning says which limb failed and names the
+    // kind that did it.
+    it("NUDGES on the ROUND limb and names the artifact kind that moved the round — a check_run demoting a matching review", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresApprovingCodeReviewGuard);
       const id = await createTask({ state: "in_review" });
@@ -348,22 +391,19 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       // and names the very same commit — nothing about the work changed.
       await createArtifact({ itemId: id, kind: "check_run", commitSha: sha, reviewRound: 2 });
 
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-      };
-      expect(error.guard).toBe("merge.requires_approving_code_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
       // The one word that would have ended all seven investigations.
-      expect(error.message).toContain("check_run");
+      expect(nudges[0]?.message).toContain("check_run");
       // Both rounds named, so the reader can see the drift without querying.
-      expect(error.message).toMatch(/round 1/);
-      expect(error.message).toMatch(/review round 2/);
+      expect(nudges[0]?.message).toMatch(/round 1/);
+      expect(nudges[0]?.message).toMatch(/review round 2/);
       // The reviewed sha is reported as what it is — a match, not a mismatch.
-      expect(error.message).toContain(sha);
-      // And the refusal must NOT send the reader hunting a moved commit.
-      expect(error.message).toContain("NOT staleness");
-      expect(error.message).not.toMatch(/has moved since it was approved/);
-      expect(await readState(id)).toBe("in_review");
+      expect(nudges[0]?.message).toContain(sha);
+      // And the warning must NOT send the reader hunting a moved commit.
+      expect(nudges[0]?.message).toContain("NOT staleness");
+      expect(nudges[0]?.message).not.toMatch(/has moved since it was approved/);
     });
 
     // ── The sha limb — occurrence SIX, the one true positive ──────────────
@@ -371,13 +411,14 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     // THE acceptance-criteria test. Of the seven firings investigated, six
     // were misdiagnoses and this one was correct: a review at sha S, a commit
     // at a different sha F, no `supersedesSha` linking them, same round. The
-    // work really did move past its review and the guard was right to refuse.
+    // work really did move past its review and the guard was right to say so.
     //
-    // It asserts the LIMB, not merely refuse/allow. An allow/refuse-only test
-    // would keep passing for the wrong reason if a later change routed this
-    // into the round limb or the null-tip branch, which is exactly the class
-    // of silent regression this row's diagnosis work is meant to prevent.
-    it("REFUSES on the SHA limb — a review at one commit, a later unrelated commit at the tip (occurrence six)", async () => {
+    // It asserts the LIMB, not merely land-or-warn. A land-and-warn test that
+    // only checked the guard id would keep passing for the wrong reason if a
+    // later change routed this into the round limb or the null-tip branch,
+    // which is exactly the class of silent regression this row's diagnosis
+    // work is meant to prevent.
+    it("NUDGES on the SHA limb — a review at one commit, a later unrelated commit at the tip (occurrence six)", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresApprovingCodeReviewGuard);
       const id = await createTask({ state: "in_review" });
@@ -400,17 +441,14 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         reviewRound: 1,
       });
 
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-      };
-      expect(error.guard).toBe("merge.requires_approving_code_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
       // The sha limb, not the round limb — both shas named, and the message
       // is the staleness one, because here staleness is the honest word.
-      expect(error.message).toContain(fixSha);
-      expect(error.message).toContain("has moved since it was approved");
-      expect(error.message).not.toContain("NOT staleness");
-      expect(await readState(id)).toBe("in_review");
+      expect(nudges[0]?.message).toContain(fixSha);
+      expect(nudges[0]?.message).toContain("has moved since it was approved");
+      expect(nudges[0]?.message).not.toContain("NOT staleness");
     });
 
     it("ALLOWS: an approval recorded at the current (later) review round", async () => {
@@ -433,7 +471,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("REFUSES: approved at the current round, but for a commit a newer, same-round commit has since superseded — round-currency alone is not commit-currency", async () => {
+    it("NUDGES: approved at the current round, but for a commit a newer, same-round commit has since superseded — round-currency alone is not commit-currency", async () => {
       // The second composition bug review round 1's fix surfaced: round 1
       // is approved against commit-a, which is the tip at that moment — but
       // then a NEW commit (commit-b) lands still at round 1 (nothing bumps
@@ -466,25 +504,20 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         createdAt: new Date(),
       });
 
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-        fields?: readonly string[];
-      };
-      expect(error.guard).toBe("merge.requires_approving_code_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
       // "last recorded commit", not "tip commit": the value is derived from
       // the item's own commit artifacts, and calling it the tip sent a caller
       // to `git log` to find the guard wrong. Asserted as message text
       // because the wording IS the fix here — the check is unchanged.
-      expect(error.message).toMatch(
+      expect(nudges[0]?.message).toMatch(
         /not for the current review round \(1\) and last recorded commit \(commit-b\)/,
       );
-      // The remedy the refusal used to omit entirely, and the only one that
-      // does not require writing something untrue.
-      expect(error.message).toMatch(/DESCENDANT/);
-      expect(error.message).toMatch(/Record a `commit` artifact at the reviewed commit/);
-      expect(error.fields).toEqual(["state"]);
-      expect(await readState(id)).toBe("in_review");
+      // The remedy the old refusal used to omit entirely, and the only one
+      // that does not require writing something untrue.
+      expect(nudges[0]?.message).toMatch(/DESCENDANT/);
+      expect(nudges[0]?.message).toMatch(/Record a `commit` artifact at the reviewed commit/);
     });
 
     it("ALLOWS: approved at the current round AND naming the current tip commit", async () => {
@@ -548,22 +581,20 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("REFUSES: needs_visual_review is true and no visual_review artifact exists", async () => {
+    it("NUDGES: needs_visual_review is true and no visual_review artifact exists", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresVisualReviewGuard);
       const id = await createTask({ state: "in_review", needsVisualReview: true });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-        fields?: readonly string[];
-      };
-      expect(error.guard).toBe("merge.requires_visual_review");
-      expect(error.message).toMatch(/no approved visual_review artifact/);
-      expect(error.fields).toEqual(["state"]);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_visual_review");
+      expect(nudges[0]?.message).toMatch(/no approved visual_review artifact/);
+      // The "nothing to look at" exit stays named: on a CI or release row the
+      // flag is the wrong thing, not the missing review.
+      expect(nudges[0]?.message).toMatch(/needsVisualReview: false/);
     });
 
-    it("REFUSES: needs_visual_review is true and the only visual_review approval is stale — attached to a superseded commit", async () => {
+    it("NUDGES: needs_visual_review is true and the only visual_review approval is stale — attached to a superseded commit", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresVisualReviewGuard);
       const id = await createTask({ state: "in_review", needsVisualReview: true });
@@ -578,18 +609,13 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "commit-b", createdAt: later });
 
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-        fields?: readonly string[];
-      };
-      expect(error.guard).toBe("merge.requires_visual_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_visual_review");
       // Same wording fix as the code_review guard: "last recorded commit",
       // and the ledger-is-behind remedy named before the re-review one.
-      expect(error.message).toMatch(/not for the last recorded commit \(commit-b\)/);
-      expect(error.message).toMatch(/DESCENDANT/);
-      expect(error.fields).toEqual(["state"]);
-      expect(await readState(id)).toBe("in_review");
+      expect(nudges[0]?.message).toMatch(/not for the last recorded commit \(commit-b\)/);
+      expect(nudges[0]?.message).toMatch(/DESCENDANT/);
     });
 
     it("ALLOWS: needs_visual_review is true and the visual_review approval is at the current tip commit", async () => {
@@ -623,7 +649,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("needs_approval: REFUSES when the approving code_review was recorded by an agent, not a person", async () => {
+    it("NUDGES: needs_approval when the approving code_review was recorded by an agent, not a person", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
       const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
@@ -633,18 +659,14 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         verdict: "approved",
         createdByType: "agent",
       });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-        fields?: readonly string[];
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(error.message).toMatch(/must record a merge_approval/);
-      expect(error.fields).toEqual(["state"]);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      expect(nudges[0]?.message).toMatch(/human approval is recommended/);
+      expect(nudges[0]?.message).toMatch(/person record a merge_approval/);
     });
 
-    it("needs_approval: REFUSES a person's approving code_review - a review is not an authorisation", async () => {
+    it("NUDGES: a person's approving code_review does not authorise — a review is not a decision", async () => {
       // THE REGRESSION TEST FOR THE FOUR-MINUTE INCIDENT (SCHEMA.md 6e).
       //
       // This is the case that used to PASS, and its passing is what made a
@@ -665,11 +687,12 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         verdict: "approved",
         createdByType: "person",
       });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      // The nudge still names what a review is NOT, so the answer cannot be
+      // read as "a person took part, so the hold is met".
+      expect(nudges[0]?.message).toMatch(/This is a decision, not a review/);
     });
 
     it("needs_approval: ALLOWS on a person-recorded merge_approval at the tip commit", async () => {
@@ -687,7 +710,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("needs_approval: REFUSES a merge_approval recorded by an AGENT - the hold is on a human", async () => {
+    it("NUDGES: a merge_approval recorded by an AGENT does not satisfy the hold — it is on a human", async () => {
       // The write path refuses this too, but the gate must not depend on that
       // alone: a row can arrive from a backfill, a fixture or direct SQL, and
       // this is the single question "may this merge without a human" rests on.
@@ -701,16 +724,14 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         commitSha: "sha-tip",
         createdByType: "agent",
       });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
     });
 
-    it("needs_approval: REFUSES a merge_approval at a commit the item has moved past, and says so", async () => {
-      // Stale, not absent - and the refusal must distinguish them, because a
-      // caller told the wrong one chases the wrong person.
+    it("NUDGES: a merge_approval at a commit the item has moved past, and says so", async () => {
+      // Stale, not absent - and the warning must distinguish them, because a
+      // caller told the wrong one chases the wrong remedy.
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
       const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
@@ -728,14 +749,11 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       });
       // New work lands, declaring no supersession - so it is genuinely new.
       await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-new" });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(error.message).toMatch(/moved past/);
-      expect(error.message).toMatch(/sha-new/);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      expect(nudges[0]?.message).toMatch(/moved past/);
+      expect(nudges[0]?.message).toMatch(/sha-new/);
     });
 
     it("needs_approval: a merge_approval carries forward across a squash (lineage), like every other clause", async () => {
@@ -810,13 +828,10 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         createdByType: "person",
         body: "Nothing material changed since the review; only a doc typo was fixed.",
       });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(error.message).toMatch(/merge_override does not satisfy/);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      expect(nudges[0]?.message).toMatch(/merge_override does not substitute/);
     });
 
     it("needs_approval: a historical_verification does NOT satisfy the hold either", async () => {
@@ -831,14 +846,12 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         createdByType: "person",
         body: "Inspected the shipped code against the acceptance criteria.",
       });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
     });
 
-    it("needs_approval: the refusal names the standing-authorisation route, and warns off the wrong one", async () => {
+    it("needs_approval: the nudge names the standing-authorisation route, and warns off the wrong one", async () => {
       // Both halves are load-bearing and neither is implied by the rule itself.
       //
       // A caller holding a standing authorisation ("merge this class of work
@@ -865,55 +878,47 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         verdict: "approved",
         createdByType: "agent",
       });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        message?: string;
-      };
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
 
       // The remedy: the field to set, the value to set it to, and the call.
-      expect(error.message).toMatch(/mergeAuthority/);
-      expect(error.message).toMatch(/pre-approved/);
-      expect(error.message).toMatch(/update_item/);
+      expect(nudges[0]?.message).toMatch(/mergeAuthority/);
+      expect(nudges[0]?.message).toMatch(/pre-approved/);
+      expect(nudges[0]?.message).toMatch(/update_item/);
 
       // The anti-remedy, named so it is not discovered by accident.
-      expect(error.message).toMatch(/created_by_type/);
-      expect(error.message).toMatch(/WROTE/);
+      expect(nudges[0]?.message).toMatch(/created_by_type/);
+      expect(nudges[0]?.message).toMatch(/WROTE/);
     });
 
-    it("needs_approval: REFUSES with no code_review artifact at all", async () => {
+    it("needs_approval: NUDGES with no code_review artifact at all", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
       const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        fields?: readonly string[];
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(error.fields).toEqual(["state"]);
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
     });
 
-    it("agent_judgement: REFUSES with no merge_rationale field supplied", async () => {
+    it("NUDGES: agent_judgement with no merge_rationale field supplied — merged, reason unstated", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
       const id = await createTask({ state: "in_review", mergeAuthority: "agent_judgement" });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-        fields?: readonly string[];
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(error.message).toMatch(/recorded one-line merge_rationale/);
-      expect(error.fields).toEqual(["merge_rationale"]);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      expect(nudges[0]?.message).toMatch(/recorded one-line rationale/);
+      expect(nudges[0]?.message).toMatch(/merge_rationale/);
     });
 
-    it("agent_judgement: REFUSES with a blank/whitespace-only merge_rationale", async () => {
+    it("NUDGES: agent_judgement with a blank/whitespace-only merge_rationale", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
       const id = await createTask({ state: "in_review", mergeAuthority: "agent_judgement" });
-      const error = (await callTransition(id, "merged", reg, {
-        merge_rationale: "   ",
-      }).catch((e: unknown) => e)) as { guard?: string };
-      expect(error.guard).toBe("merge.requires_authorisation");
+      const nudges = await mergedWithNudges(id, reg, { merge_rationale: "   " });
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
     });
 
     it("agent_judgement: ALLOWS once a one-line merge_rationale is supplied", async () => {
@@ -941,7 +946,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("pr: REFUSES while the PR is still open, and says to merge it", async () => {
+    it("NUDGES: pr while the PR is still open, and says to merge it", async () => {
       // The ordinary unmet case. Fails if the clause returns guardOk without
       // consulting the artifact — i.e. if `pr` were treated as an alias for
       // `pre_approved`, which is the shape a careless implementation takes.
@@ -949,18 +954,13 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       reg.register(mergeRequiresAuthorisationGuard);
       const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
       await createArtifact({ itemId: id, kind: "pull_request", body: "open" });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-        fields?: readonly string[];
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(error.message).toMatch(/reports `open`/);
-      expect(error.fields).toEqual(["state"]);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      expect(nudges[0]?.message).toMatch(/reports `open`/);
     });
 
-    it("pr: REFUSES a CLOSED pull request — closed is not merged", async () => {
+    it("NUDGES: a CLOSED pull request — closed is not merged", async () => {
       // THE POINT OF THE WHOLE CHANGE. Before `merged` existed as a status,
       // a PR that merged and a PR abandoned without merging both stored as
       // `closed`, so a gate reading the status could not tell "the work
@@ -971,16 +971,13 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       reg.register(mergeRequiresAuthorisationGuard);
       const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
       await createArtifact({ itemId: id, kind: "pull_request", body: "closed" });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(error.message).toMatch(/A closed PR is not a merged one/);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      expect(nudges[0]?.message).toMatch(/A closed PR is not a merged one/);
     });
 
-    it("pr: REFUSES with no pull_request artifact at all, and names the recording remedy", async () => {
+    it("NUDGES: pr with no pull_request artifact at all, and names the recording remedy", async () => {
       // A distinct fault from "the PR is open", and deliberately given a
       // different message: this is usually a bookkeeping gap (the PR exists
       // and nobody recorded it), so telling this caller to "merge your PR"
@@ -989,13 +986,10 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
       const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(error.message).toMatch(/no pull_request artifact has been recorded/);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      expect(nudges[0]?.message).toMatch(/no pull_request artifact has been recorded/);
     });
 
     it("pr: reads the NEWEST row only — a later close supersedes an earlier merge", async () => {
@@ -1021,11 +1015,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         body: "closed",
         createdAt: new Date(),
       });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
     });
 
     it("pr: reads the NEWEST row only — a later merge supersedes an earlier close", async () => {
@@ -1051,20 +1043,17 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("pr: REFUSES a draft — a draft PR has not landed", async () => {
+    it("NUDGES: a draft PR — a draft has not landed", async () => {
       // `draft` joined the vocabulary in the same change as `merged`. It is
       // not a near-miss for merged and must not read as one.
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
       const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
       await createArtifact({ itemId: id, kind: "pull_request", body: "draft" });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(error.message).toMatch(/reports `draft`/);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      expect(nudges[0]?.message).toMatch(/reports `draft`/);
     });
 
     it("pr: a merge_approval does NOT satisfy it — the condition is a fact, not a decision", async () => {
@@ -1084,50 +1073,50 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         commitSha: "sha-tip",
         createdByType: "person",
       });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      // The warning itself says no decision substitutes for the fact.
+      expect(nudges[0]?.message).toMatch(/Nothing substitutes for that fact/);
     });
 
-    it("pr: is STRICTER than pre_approved — the same item merges on pre_approved and refuses on pr", async () => {
+    it("pr: is STRICTER than pre_approved — the same evidence lands silently there and with a warning on pr", async () => {
       // The claim the migration and the guard doc both make, stated as a
       // test rather than as prose. A fourth value on an authorisation enum
       // reads like a loosening, and this is what shows it is not: identical
-      // evidence, and `pr` is the one that holds.
+      // evidence, and `pr` is the one that still says something.
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
 
       const permissive = await createTask({ state: "in_review", mergeAuthority: "pre_approved" });
       await createArtifact({ itemId: permissive, kind: "pull_request", body: "open" });
-      await callTransition(permissive, "merged", reg);
+      const silent = (await callTransition(permissive, "merged", reg)) as { nudges: unknown[] };
       expect(await readState(permissive)).toBe("merged");
+      expect(silent.nudges).toEqual([]);
 
       const gated = await createTask({ state: "in_review", mergeAuthority: "pr" });
       await createArtifact({ itemId: gated, kind: "pull_request", body: "open" });
-      await callTransition(gated, "merged", reg).catch(() => undefined);
-      expect(await readState(gated)).toBe("in_review");
+      const nudges = await mergedWithNudges(gated, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
     });
 
-    it("pr: an unrecognised legacy body falls through to open and REFUSES, rather than passing", async () => {
+    it("pr: an unrecognised legacy body falls through to open and NUDGES, rather than passing", async () => {
       // The read path is lenient about rows written before the status
       // vocabulary existed, and that leniency has to fail safe here: an
-      // unrecognised body reads as `open`, so the gate refuses. Fails if the
+      // unrecognised body reads as `open`, so the gate warns. Fails if the
       // fallback is ever changed to something that satisfies this clause,
       // which would let an unvalidated row authorise a merge.
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
       const id = await createTask({ state: "in_review", mergeAuthority: "pr" });
       await createArtifact({ itemId: id, kind: "pull_request", body: "some old note" });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
     });
 
-    it("needs_approval: REFUSES when the person's approval is at an EARLIER round than the current one, even though a person approved at some point — round-2 review-1 defect", async () => {
+    it("NUDGES: a person's approval at an EARLIER round than the current one — round-2 review-1 defect", async () => {
       // The regression test for the composition bug review round 1 found:
       // a person approved code_review at round 1; the item was then
       // re-reviewed and approved again, this time only by an agent, at
@@ -1154,13 +1143,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         createdByType: "agent",
         reviewRound: 2,
       });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        fields?: readonly string[];
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(error.fields).toEqual(["state"]);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
     });
 
     it("needs_approval: a new review ROUND at the same commit does not expire a person's decision", async () => {
@@ -1198,7 +1183,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("needs_approval: REFUSES when the person's approval is at the current round but for a superseded commit — round-currency alone is not commit-currency", async () => {
+    it("NUDGES: a person's approval at the current round but for a superseded commit — round-currency alone is not commit-currency", async () => {
       // The second composition bug: a person's approval sits at the
       // current round, but for a commit a newer, same-round commit has
       // since superseded. The current round's actual tip-matching approval
@@ -1239,19 +1224,15 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         createdAt: new Date(),
       });
 
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        fields?: readonly string[];
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(error.fields).toEqual(["state"]);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
     });
 
-    it("needs_approval: REFUSES an unpinned merge_approval once a real tip exists", async () => {
+    it("needs_approval: NUDGES an unpinned merge_approval once a real tip exists", async () => {
       // An approval recording no commit cannot be shown to be about the code
-      // that would ship, so it is refused the moment there is a tip to be
-      // stale against. Same reading artifact-tip.ts documents.
+      // that would ship, so the clause is unmet the moment there is a tip to
+      // be stale against. Same reading artifact-tip.ts documents.
       //
       // The write path requires a commitSha, so this row can only arrive from
       // another writer - which is exactly why the gate checks it too.
@@ -1265,11 +1246,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         createdByType: "person",
       });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-tip" });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
     });
 
     it("REFUSES a merge_authority value outside the three declared ones — defensive against an enum drift", async () => {
@@ -1310,7 +1289,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
   });
 
   describe("all four together — the full merged gate, matching SCHEMA.md §16's row exactly", () => {
-    it("REFUSES until every clause is satisfied, then ALLOWS once they all are", async () => {
+    it("warns for EVERY missing clause at once, and falls silent clause by clause as they are met", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresCommitGuard);
       reg.register(mergeRequiresApprovingCodeReviewGuard);
@@ -1323,14 +1302,28 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         mergeAuthority: "needs_approval",
       });
 
-      // Nothing recorded yet.
-      let error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("merge.requires_commit");
-      expect(await readState(id)).toBe("in_review");
+      // The composition claim the old version could not make: where the
+      // refuse-first design reported exactly one clause and hid the other
+      // three, the nudge gate lists every gap in one answer, in
+      // registration order — a caller fixing one gap learns about the rest
+      // in the same call instead of discovering them one round trip at a
+      // time. The merge landed on every step below; `mergedWithNudges`
+      // asserts that.
+      const nothingRecorded = await mergedWithNudges(id, reg);
+      expect(nothingRecorded.map((n) => n.guard)).toEqual([
+        "merge.requires_commit",
+        "merge.requires_approving_code_review",
+        "merge.requires_visual_review",
+        "merge.requires_authorisation",
+      ]);
 
       await createArtifact({ itemId: id, kind: "commit", commitSha: "commit-a" });
-      error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("merge.requires_approving_code_review");
+      const withCommit = await mergedWithNudges(id, reg);
+      expect(withCommit.map((n) => n.guard)).toEqual([
+        "merge.requires_approving_code_review",
+        "merge.requires_visual_review",
+        "merge.requires_authorisation",
+      ]);
 
       await createArtifact({
         itemId: id,
@@ -1339,8 +1332,11 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         createdByType: "agent",
         commitSha: "commit-a",
       });
-      error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("merge.requires_visual_review");
+      const withReview = await mergedWithNudges(id, reg);
+      expect(withReview.map((n) => n.guard)).toEqual([
+        "merge.requires_visual_review",
+        "merge.requires_authorisation",
+      ]);
 
       await createArtifact({
         itemId: id,
@@ -1348,15 +1344,14 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         verdict: "approved",
         commitSha: "commit-a",
       });
-      // Every review clause is now satisfied, but no person has DECIDED, so
-      // needs_approval still blocks.
-      error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("merge.requires_authorisation");
-      expect(await readState(id)).toBe("in_review");
+      // Every review clause is now satisfied; only the human DECISION is
+      // still owed.
+      const withVisual = await mergedWithNudges(id, reg);
+      expect(withVisual.map((n) => n.guard)).toEqual(["merge.requires_authorisation"]);
 
-      // Recording the review a SECOND time as a person does not help - it is
-      // not an authorisation, and this is the step that used to let the hold
-      // be walked past.
+      // Recording the review a SECOND time as a person does not clear it -
+      // it is not an authorisation, and this is the step that used to let
+      // the hold be walked past.
       await createArtifact({
         itemId: id,
         kind: "code_review",
@@ -1365,22 +1360,22 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         commitSha: "commit-a",
         reviewRound: 1,
       });
-      error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("merge.requires_authorisation");
-      expect(await readState(id)).toBe("in_review");
+      const personReviewAgain = await mergedWithNudges(id, reg);
+      expect(personReviewAgain.map((n) => n.guard)).toEqual(["merge.requires_authorisation"]);
 
-      // Only the person's recorded decision clears it.
+      // Only the person's recorded decision silences the last warning.
       await createArtifact({
         itemId: id,
         kind: "merge_approval",
         createdByType: "person",
         commitSha: "commit-a",
       });
-      await callTransition(id, "merged", reg);
+      const complete = (await callTransition(id, "merged", reg)) as { nudges: unknown[] };
       expect(await readState(id)).toBe("merged");
+      expect(complete.nudges).toEqual([]);
     });
 
-    it("REFUSES the review round 1 defect: person-approved at an earlier round, agent-only approved at the current round, commit present — against MERGE_GUARDS exactly as ALL_GUARDS registers them", async () => {
+    it("NUDGES the review round 1 defect: person-approved at an earlier round, agent-only approved at the current round, commit present — against MERGE_GUARDS exactly as ALL_GUARDS registers them", async () => {
       // Reproduces review round 1's finding verbatim, against
       // `MERGE_GUARDS` — the exact four-guard array `ALL_GUARDS`
       // (`src/lib/service/guards/index.ts`) installs into `guardRegistry`
@@ -1445,11 +1440,14 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         reviewRound: 2,
       });
 
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-      };
-      expect(error.guard).toBe("merge.requires_authorisation");
-      expect(await readState(id)).toBe("in_review");
+      // The review clause is satisfied by the round-2 agent approval, so a
+      // gate that only checked "a person approved SOMETHING" would let this
+      // through silently — the composition defect. The composed gate merges
+      // and warns, and the single warning names the authorisation clause:
+      // the person's round-1 approval is not evidence about what shipped.
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
     });
   });
 
@@ -1556,22 +1554,24 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       });
     }
 
-    it("REFUSES: an `na` verdict — a legal value that is not an approval", async () => {
-      // The interesting rejection. An "everything except changes_required"
+    it("NUDGES: an `na` verdict — a legal value that is not an approval", async () => {
+      // The interesting distinction. An "everything except changes_required"
       // reading of the enum would wave this through, and `na` is what a
       // commit or a test-run artifact carries — an item would merge on the
-      // strength of an artifact that reviewed nothing.
+      // strength of an artifact that reviewed nothing. The merge lands with
+      // the warning: the clause still draws the line, it just does not
+      // stand on it.
       const reg = new GuardRegistry();
       reg.register(mergeRequiresApprovingCodeReviewGuard);
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-na" });
       await createArtifact({ itemId: id, kind: "code_review", verdict: "na", commitSha: "sha-na" });
-      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
     });
 
-    it("REFUSES: changes_required, unchanged by the tiering", async () => {
+    it("NUDGES: changes_required, unchanged by the tiering", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresApprovingCodeReviewGuard);
       const id = await createTask({ state: "in_review" });
@@ -1582,9 +1582,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         verdict: "changes_required",
         commitSha: "sha-cr",
       });
-      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
     });
 
     it("REFUSES at the database: a verdict outside the enum", async () => {
@@ -1603,7 +1603,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       ).rejects.toThrow();
     });
 
-    it("stores a findings list with severities, and a MEDIUM under lgtm_with_nits now BLOCKS", async () => {
+    it("stores a findings list with severities, and a MEDIUM under lgtm_with_nits speaks up", async () => {
       // Findings change the merge outcome beneath exactly one verdict:
       // `lgtm_with_nits` claims the remainder is cosmetic, and a medium
       // finding contradicts the verdict's own terms.
@@ -1621,17 +1621,15 @@ describeIfDb("merge guards (#18), against Postgres", () => {
           { text: "a stray log line", severity: "low" },
         ],
       });
-      const error = (await callTransition(id, "merged", reg).catch((e: unknown) => e)) as {
-        guard?: string;
-        message?: string;
-      };
-      expect(error.guard).toBe("merge.requires_approving_code_review");
-      // The refusal quotes the finding, so the caller does not have to go and
-      // look it up - the failure this gate addresses is a merging party who
-      // never read the review.
-      expect(error.message).toMatch(/the retry path is untested/);
-      expect(error.message).not.toMatch(/a stray log line/);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+      // The warning quotes the finding, so the caller does not have to go
+      // and look it up - the failure this gate addresses is a merging party
+      // who never read the review. Only the BLOCKING findings are quoted:
+      // the low one is not what the clause objects to.
+      expect(nudges[0]?.message).toMatch(/the retry path is untested/);
+      expect(nudges[0]?.message).not.toMatch(/a stray log line/);
 
       // Still stored verbatim - the gate reads findings, it does not rewrite them.
       const stored = await prisma.artifact.findFirstOrThrow({
@@ -1789,11 +1787,12 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("lgtm_with_nits goes stale when the nits are addressed, and merges again once re-reviewed", async () => {
+    it("lgtm_with_nits goes stale when the nits are addressed — and the second merge is clean once re-reviewed", async () => {
       // This is the whole "merge after nits" rule, and it needs no gate of
       // its own: addressing a nit produces a commit, the commit moves the
-      // tip, and the existing tip-currency check refuses the now-stale
-      // approval until a light re-review lands at the new tip.
+      // tip, and the existing tip-currency check warns about the now-stale
+      // approval — loudly, and until a light re-review lands at the new
+      // tip, after which the merge answers with nothing to say.
       const reg = new GuardRegistry();
       reg.register(mergeRequiresApprovingCodeReviewGuard);
       const id = await createTask({ state: "in_review" });
@@ -1817,9 +1816,10 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         commitSha: "sha-after-nits",
         createdAt: new Date("2026-01-01T11:00:00Z"),
       });
-      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect(await readState(id)).toBe("in_review");
+      const first = await mergedWithNudges(id, reg);
+      expect(first).toHaveLength(1);
+      expect(first[0]?.guard).toBe("merge.requires_approving_code_review");
+      expect(first[0]?.message).toContain("has moved since it was approved");
 
       // The light re-review at the new tip.
       await createArtifact({
@@ -1829,8 +1829,8 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         commitSha: "sha-after-nits",
         createdAt: new Date("2026-01-01T11:05:00Z"),
       });
-      await callTransition(id, "merged", reg);
-      expect(await readState(id)).toBe("merged");
+      const second = await mergedWithNudges(id, reg);
+      expect(second).toEqual([]);
     });
   });
 
@@ -1856,15 +1856,14 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       return reg;
     }
 
-    it("REFUSES: lgtm_with_followups with no follow-up linked", async () => {
-      // The rejection this verdict exists to make possible. Without it the
+    it("NUDGES: lgtm_with_followups with no follow-up linked", async () => {
+      // The warning this verdict needs to stay honest. Without it the
       // verdict is strictly the cheapest option available to a reviewer and
       // nothing ever checks the other half of the bargain.
       const id = await approvedWith("lgtm_with_followups");
-      const error = await callTransition(id, "merged", registry()).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect((error as { guard?: string }).guard).toBe("merge.requires_linked_followup");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, registry());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_linked_followup");
     });
 
     it("ACCEPTS: lgtm_with_followups linking an open follow-up item", async () => {
@@ -1875,17 +1874,17 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     });
 
     for (const closedState of ["merged", "wont_do", "cancelled", "research_done"]) {
-      it(`REFUSES: lgtm_with_followups linking a follow-up already ${closedState}`, async () => {
+      it(`NUDGES: lgtm_with_followups linking a follow-up already ${closedState}`, async () => {
         // Linking a dead item would satisfy the letter of the rule and
         // defeat it entirely — the findings would be attached to something
         // nobody is going to pick up. Single-character mutation this
         // catches: removing any one entry from CLOSED_ITEM_STATES.
         const followUp = await createTask({ state: closedState });
         const id = await approvedWith("lgtm_with_followups", followUp);
-        const error = await callTransition(id, "merged", registry()).catch((e: unknown) => e);
-        expect(isServiceError(error)).toBe(true);
-        expect((error as { message?: string }).message).toContain(closedState);
-        expect(await readState(id)).toBe("in_review");
+        const nudges = await mergedWithNudges(id, registry());
+        expect(nudges).toHaveLength(1);
+        expect(nudges[0]?.guard).toBe("merge.requires_linked_followup");
+        expect(nudges[0]?.message).toContain(closedState);
       });
     }
 
@@ -1914,16 +1913,17 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     }
 
     it("stays silent when there is no qualifying approval at all", async () => {
-      // That item is already refused by merge.requires_approving_code_review,
-      // and a second rejection naming a different cause would only obscure
-      // the real one. Registered alone here, so "silent" is observable: the
-      // transition succeeds.
+      // That item already gets its warning from
+      // merge.requires_approving_code_review, and a second one naming a
+      // different cause would only obscure the real one. Registered alone
+      // here, so "silent" is observable: the transition succeeds with
+      // nothing at all on the answer.
       const id = await createTask({ state: "in_review" });
       await callTransition(id, "merged", registry());
       expect(await readState(id)).toBe("merged");
     });
 
-    it("REFUSES: the link is on a STALE approval and the tip approval has none", async () => {
+    it("NUDGES: the link is on a STALE approval and the tip approval has none", async () => {
       // Guards against the obvious way round this rule: link a follow-up
       // once, then keep re-reviewing with lgtm_with_followups and no link.
       // The guard reads the same artifact the merge is resting on — the one
@@ -1958,9 +1958,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         followUpItemId: null,
         createdAt: new Date("2026-01-01T11:01:00Z"),
       });
-      const error = await callTransition(id, "merged", registry()).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, registry());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_linked_followup");
     });
 
     it("reads the NEWEST approval at the tip when two exist at the same round", async () => {
@@ -1988,7 +1988,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("REFUSES when the newest approval at the tip is the one deferring findings", async () => {
+    it("NUDGES when the newest approval at the tip is the one deferring findings", async () => {
       // The mirror of the case above, so "newest wins" is pinned in both
       // directions rather than only in the direction that permits a merge.
       const id = await createTask({ state: "in_review" });
@@ -2007,9 +2007,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         commitSha: "sha-two-b",
         createdAt: new Date("2026-01-01T10:30:00Z"),
       });
-      const error = await callTransition(id, "merged", registry()).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, registry());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_linked_followup");
     });
   });
 
@@ -2058,10 +2058,11 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       return reg;
     }
 
-    it("REFUSES while the window is CLOSED, even with a perfectly-formed artifact — the default posture is unchanged", async () => {
+    it("NUDGES while the window is CLOSED, even with a perfectly-formed artifact — the default posture is unchanged", async () => {
       // The most important case in this block. With the window shut, this
-      // path does not exist and the guard must behave exactly as it did
-      // before the alternative was added.
+      // path does not exist, and the guard must say exactly what it said
+      // before the alternative was added — a warning that names no
+      // historical route, because with the window shut there is none.
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
       await createArtifact({
@@ -2072,12 +2073,13 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       });
       delete process.env[ENV_VAR];
 
-      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reviewClauseOnly());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+      expect(nudges[0]?.message).not.toContain("historical_verification");
     });
 
-    it("REFUSES for every near-miss spelling of the flag — the window fails closed", async () => {
+    it("NUDGES for every near-miss spelling of the flag — the window fails closed", async () => {
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
       await createArtifact({
@@ -2089,11 +2091,12 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       for (const value of ["1", "yes", "on", "TRUE", "True", "true ", " true", "", "false"]) {
         process.env[ENV_VAR] = value;
-        const error = await callTransition(id, "merged", reviewClauseOnly()).catch(
-          (e: unknown) => e,
-        );
-        expect((error as { code?: string }).code).toBe("guard_rejected");
-        expect(await readState(id)).toBe("in_review");
+        const nudges = await mergedWithNudges(id, reviewClauseOnly());
+        expect(nudges).toHaveLength(1);
+        expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+        // Fails closed all the way: the warning must not offer the route the
+        // misspelling did not turn on.
+        expect(nudges[0]?.message).not.toContain("historical_verification");
       }
     });
 
@@ -2108,11 +2111,11 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         body: "Verified against merged code at abc123; the routes are gone and no links remain.",
       });
 
-      await callTransition(id, "merged", reviewClauseOnly());
-      expect(await readState(id)).toBe("merged");
+      const nudges = await mergedWithNudges(id, reviewClauseOnly());
+      expect(nudges).toEqual([]);
     });
 
-    it("REFUSES when the verification names a commit the tip has moved past — an inspection of superseded code proves nothing about what ships", async () => {
+    it("NUDGES when the verification names a commit the tip has moved past — an inspection of superseded code proves nothing about what ships", async () => {
       openWindow();
       const id = await createTask({ state: "in_review" });
       await createArtifact({
@@ -2131,12 +2134,12 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       // is not what would ship.
       await createArtifact({ itemId: id, kind: "commit", commitSha: "new222" });
 
-      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reviewClauseOnly());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
     });
 
-    it("REFUSES a verification with no body — the evidence IS the difference from an unfalsifiable approval", async () => {
+    it("NUDGES a verification with no body — the evidence IS the difference from an unfalsifiable approval", async () => {
       // `record_artifact` refuses to write this row; the guard asserts it
       // independently, because this is the clause that decides a merge and
       // it must not rest on an upstream validator staying correct.
@@ -2150,9 +2153,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         body: null,
       });
 
-      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reviewClauseOnly());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
     });
 
     it("does NOT satisfy merge_authority needs_approval — a person's sign-off is still required", async () => {
@@ -2168,7 +2171,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         body: "inspected at abc123",
         // Authored by a PERSON deliberately. The authorisation clause also
         // requires `createdByType = 'person'`, so an agent-authored artifact
-        // would be refused for that reason instead and this test would pass
+        // would be warned for that reason instead and this test would pass
         // without ever exercising the kind check — leaving the guarantee it
         // claims to protect undefended against a future edit that widened
         // the query's `kind` filter.
@@ -2177,10 +2180,10 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
-      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect((error as { message?: string }).message).toContain("needs_approval");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      expect(nudges[0]?.message).toContain("needs_approval");
     });
 
     it("does NOT satisfy needs_approval even when person-authored AND carrying an approving verdict — the defence in depth, spelled out", async () => {
@@ -2198,7 +2201,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       // only thing left standing — otherwise widening the query's `kind`
       // filter would be an undetectable regression. Person-authored and
       // approving, so neither `createdByType` nor `verdict` can be the reason
-      // it is refused.
+      // it warns.
       openWindow();
       const id = await createTask({ state: "in_review", mergeAuthority: "needs_approval" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
@@ -2213,10 +2216,10 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
-      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect((error as { message?: string }).message).toContain("needs_approval");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      expect(nudges[0]?.message).toContain("needs_approval");
     });
 
     it("does NOT satisfy the visual-review clause — an unrelated requirement stays unrelated", async () => {
@@ -2232,9 +2235,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       reg.register(mergeRequiresVisualReviewGuard);
-      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_visual_review");
     });
 
     it("leaves the lgtm_with_followups obligation intact where such an approval actually exists", async () => {
@@ -2243,7 +2246,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       // expect `merge.requires_linked_followup` to go quiet and let an
       // unhonoured lgtm_with_followups bargain through. It cannot — where a
       // qualifying approval carrying that verdict exists, that guard reads
-      // it and fires exactly as before.
+      // it and warns exactly as before.
       openWindow();
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
@@ -2263,10 +2266,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       reg.register(mergeRequiresLinkedFollowUpGuard);
-      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect((error as { guard?: string }).guard).toBe("merge.requires_linked_followup");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_linked_followup");
     });
 
     // ── The follow-up bargain cannot be dissolved by an inspection ────────
@@ -2274,10 +2276,11 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     // Found by adversarial probe, not by reading: `merge.requires_linked_followup`
     // resolves its approval by ROUND AND TIP, so an honest `lgtm_with_followups`
     // stops qualifying when either moves and that guard then correctly says
-    // nothing. That is safe only while the same non-qualification also refuses
-    // the merge at the code-review clause — which an alternative satisfier
-    // removes. Both demotion routes are pinned here.
-    it("REFUSES when a higher-round verification demotes an lgtm_with_followups whose follow-up is dead — round demotion", async () => {
+    // nothing. That was safe only while the same non-qualification made the
+    // code-review clause speak up — and it still does, by name: the review
+    // clause itself warns when an inspection would dissolve an unhonoured
+    // bargain. Both demotion routes are pinned here.
+    it("NUDGES when a higher-round verification demotes an lgtm_with_followups whose follow-up is dead — round demotion", async () => {
       openWindow();
       const id = await createTask({ state: "in_review" });
       const deadFollowUp = await createTask({ state: "cancelled" });
@@ -2301,16 +2304,16 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         reviewRound: 2,
       });
 
-      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      // The refusal must name the real obstacle. Telling the caller to go and
+      const nudges = await mergedWithNudges(id, reviewClauseOnly());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+      // The warning must name the real obstacle. Telling the caller to go and
       // get a code review, when the actual problem is a dead follow-up, sends
       // them to fix the wrong thing.
-      expect((error as { message?: string }).message).toContain("follow-up");
-      expect(await readState(id)).toBe("in_review");
+      expect(nudges[0]?.message).toContain("follow-up");
     });
 
-    it("REFUSES when a verification at a newer tip demotes an lgtm_with_followups whose follow-up is dead — tip demotion, no explicit round needed", async () => {
+    it("NUDGES when a verification at a newer tip demotes an lgtm_with_followups whose follow-up is dead — tip demotion, no explicit round needed", async () => {
       openWindow();
       const id = await createTask({ state: "in_review" });
       const deadFollowUp = await createTask({ state: "wont_do" });
@@ -2338,16 +2341,16 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         body: "inspected at new222",
       });
 
-      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect((error as { message?: string }).message).toContain("follow-up");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reviewClauseOnly());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+      expect(nudges[0]?.message).toContain("follow-up");
     });
 
     it("ALLOWS a demoted lgtm_with_followups whose follow-up is still LIVE — the bargain is honoured, so nothing is owed", async () => {
-      // The other half of the rule: this must refuse an unhonoured bargain
-      // without refusing an honoured one, or it would simply block every
-      // item that ever carried the verdict.
+      // The other half of the rule: this must warn about an unhonoured
+      // bargain without warning about an honoured one, or it would simply
+      // complain on every item that ever carried the verdict.
       openWindow();
       const id = await createTask({ state: "in_review" });
       const liveFollowUp = await createTask({ state: "on_deck" });
@@ -2368,11 +2371,11 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         reviewRound: 2,
       });
 
-      await callTransition(id, "merged", reviewClauseOnly());
-      expect(await readState(id)).toBe("merged");
+      const nudges = await mergedWithNudges(id, reviewClauseOnly());
+      expect(nudges).toEqual([]);
     });
 
-    it("REFUSES a demoted lgtm_with_followups that links NO follow-up at all", async () => {
+    it("NUDGES a demoted lgtm_with_followups that links NO follow-up at all", async () => {
       openWindow();
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
@@ -2392,10 +2395,10 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         reviewRound: 2,
       });
 
-      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect((error as { message?: string }).message).toContain("follow-up");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reviewClauseOnly());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+      expect(nudges[0]?.message).toContain("follow-up");
     });
 
     it("ALLOWS a plain lgtm that was demoted — only the followups tier carries an obligation to honour", async () => {
@@ -2421,7 +2424,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("REFUSES when a newer but STALE plain lgtm shadows an unhonoured bargain — supersession needs standing, not just recency", async () => {
+    it("NUDGES when a newer but STALE plain lgtm shadows an unhonoured bargain — supersession needs standing, not just recency", async () => {
       // The selection rule this pins. `record_artifact` never checks a
       // code_review commitSha against the tip, so a caller can record a
       // deliberately stale plain `lgtm`: too stale to satisfy any merge
@@ -2431,8 +2434,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       // the item would merge with a dead follow-up — discharged by a review
       // that never reviewed the code being merged.
       //
-      // Run against the FULL registry: the claim is "this item cannot reach
-      // merged", which no single clause can settle.
+      // Run against the FULL registry: the claim is that this item cannot
+      // merge without a warning — and earns exactly one — which no single
+      // clause can settle on its own.
       openWindow();
       const id = await createTask({ state: "in_review", mergeAuthority: "pre_approved" });
       const deadFollowUp = await createTask({ state: "cancelled" });
@@ -2461,10 +2465,10 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         reviewRound: 2,
       });
 
-      const error = await callTransition(id, "merged", allMergeGuards()).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect((error as { message?: string }).message).toContain("follow-up");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, allMergeGuards());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+      expect(nudges[0]?.message).toContain("follow-up");
     });
 
     it("ALLOWS when a newer QUALIFYING clean review supersedes the bargain — an obligation can be retired, but only by a review with standing", async () => {
@@ -2494,11 +2498,11 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         createdAt: new Date(Date.now() - 20_000),
       });
 
-      await callTransition(id, "merged", allMergeGuards());
-      expect(await readState(id)).toBe("merged");
+      const nudges = await mergedWithNudges(id, allMergeGuards());
+      expect(nudges).toEqual([]);
     });
 
-    it("REFUSES an unhonoured bargain that is not the newest approving review, through the full registry", async () => {
+    it("NUDGES an unhonoured bargain that is not the newest approving review, through the full registry", async () => {
       // Guards against the check narrowing back to "the newest approving
       // review" by any route: here the newest approving row is a plain lgtm
       // at the tip but at an EARLIER round, so it does not qualify, and the
@@ -2533,10 +2537,10 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         reviewRound: 2,
       });
 
-      const error = await callTransition(id, "merged", allMergeGuards()).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect((error as { message?: string }).message).toContain("follow-up");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, allMergeGuards());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+      expect(nudges[0]?.message).toContain("follow-up");
     });
 
     it("ALLOWS a demoted bargain whose follow-up is live, through the full registry — no over-refusal", async () => {
@@ -2560,11 +2564,11 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         reviewRound: 2,
       });
 
-      await callTransition(id, "merged", allMergeGuards());
-      expect(await readState(id)).toBe("merged");
+      const nudges = await mergedWithNudges(id, allMergeGuards());
+      expect(nudges).toEqual([]);
     });
 
-    it("still REFUSES with no commit artifact at all — there is no tip to have inspected", async () => {
+    it("NUDGES with no commit artifact at all — there is no tip to have inspected", async () => {
       openWindow();
       const id = await createTask({ state: "in_review" });
       await createArtifact({
@@ -2574,12 +2578,12 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         body: "inspected something",
       });
 
-      const error = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reviewClauseOnly());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
     });
 
-    it("the refusal names the alternative while the window is open, and stays silent about it while closed", async () => {
+    it("the warning names the alternative while the window is open, and stays silent about it while closed", async () => {
       // A path nobody is told about is a path nobody takes — and the one
       // they take instead is recording a code_review that nothing can check.
       // Equally, advertising a shut door would be worse than saying nothing.
@@ -2587,19 +2591,19 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       await createArtifact({ itemId: id, kind: "commit", commitSha: "abc123" });
 
       delete process.env[ENV_VAR];
-      const closed = await callTransition(id, "merged", reviewClauseOnly()).catch(
-        (e: unknown) => e,
-      );
-      expect((closed as { message?: string }).message).not.toContain("historical_verification");
+      const closed = await mergedWithNudges(id, reviewClauseOnly());
+      expect(closed).toHaveLength(1);
+      expect(closed[0]?.message).not.toContain("historical_verification");
 
       openWindow();
-      const open = await callTransition(id, "merged", reviewClauseOnly()).catch((e: unknown) => e);
-      expect((open as { message?: string }).message).toContain("historical_verification");
+      const open = await mergedWithNudges(id, reviewClauseOnly());
+      expect(open).toHaveLength(1);
+      expect(open[0]?.message).toContain("historical_verification");
     });
   });
 
-  describe("rehearsal — reports the rejection without writing anything", () => {
-    it("reports the merge rejection and leaves the item unchanged", async () => {
+  describe("rehearsal — reports the warnings without writing anything", () => {
+    it("reports the merge warnings and leaves the item unchanged", async () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresCommitGuard);
       const id = await createTask({ state: "in_review" });
@@ -2617,8 +2621,12 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         operation: "test",
       };
       const outcome = await rehearseTransition(ctx, { itemId: id, to: "merged" }, reg);
-      expect(outcome.allowed).toBe(false);
-      expect(outcome.rejection?.guard).toBe("merge.requires_commit");
+      // The rehearsal answers "what would this call report" — and since the
+      // real call now reports a warning rather than a wall, so does this.
+      expect(outcome.allowed).toBe(true);
+      expect(outcome.nudges).toEqual([
+        { guard: "merge.requires_commit", message: expect.stringContaining("merge_proof") },
+      ]);
       expect(await readState(id)).toBe("in_review");
     });
   });
@@ -2647,7 +2655,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     // sequence three independent sessions reported as unsatisfiable: review
     // the branch tip, squash-merge (which mints a NEW sha that did not exist
     // at review time), record the landed commit, try to merge.
-    it("REFUSES without a supersession link — the documented unsatisfiable case, still refused", async () => {
+    it("still warns without a supersession link — the documented unsatisfiable case is not silently carried", async () => {
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "e993415" });
       await createArtifact({
@@ -2661,10 +2669,11 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       for (const guard of MERGE_GUARDS) reg.register(guard);
-      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
-        guard: "merge.requires_approving_code_review",
-      });
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      // The warning still fires: the fix carries an approval across a
+      // RECORDED rewrite; it does not make an unrecorded one invisible.
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
     });
 
     it("ALLOWS when the landed commit records supersedesSha — same shas, link added", async () => {
@@ -2688,8 +2697,10 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       for (const guard of MERGE_GUARDS) reg.register(guard);
-      await callTransition(id, "merged", reg);
-      expect(await readState(id)).toBe("merged");
+      const nudges = await mergedWithNudges(id, reg);
+      // Fully silent, not merely allowed: the lineage fix removes the
+      // warning as cleanly as it used to remove the wall.
+      expect(nudges).toEqual([]);
     });
 
     it("follows a multi-hop chain — a rebase, then a squash", async () => {
@@ -2716,14 +2727,14 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       for (const guard of MERGE_GUARDS) reg.register(guard);
-      await callTransition(id, "merged", reg);
-      expect(await readState(id)).toBe("merged");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toEqual([]);
     });
 
-    // The load-bearing negative. If this ever passes, the fix has become a
-    // hole: a commit carrying genuinely new, unreviewed work would be riding
-    // in on an older approval.
-    it("REFUSES a genuinely new commit stacked after a superseding one — staleness still caught", async () => {
+    // The load-bearing negative. If this ever goes silent, the fix has
+    // become a hole: a commit carrying genuinely new, unreviewed work would
+    // be riding in on an older approval without the answer saying so.
+    it("NUDGES a genuinely new commit stacked after a superseding one — staleness still called out", async () => {
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "aaa1111" });
       await createArtifact({
@@ -2744,10 +2755,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       for (const guard of MERGE_GUARDS) reg.register(guard);
-      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
-        guard: "merge.requires_approving_code_review",
-      });
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
     });
 
     // Same case as directly above, forced onto the actual collision this row
@@ -2777,12 +2787,12 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     // HIGHEST, so under the reverted `"createdAt" DESC, "id" DESC` ordering
     // it — not the true tip `ddd4444` — always wins the tie and is wrongly
     // treated as current. That guarantees the guard wrongly allows the merge
-    // under the reverted code every run, and this test's `.rejects` then
-    // never fires: a deterministic kill instead of a coin flip. Under the
-    // fix (`seq DESC`), insertion order decides regardless of what the ids
-    // happen to be, so `ddd4444` — inserted after `bbb2222` — still wins and
-    // the merge is still correctly refused.
-    it("REFUSES the same case even when the new commit ties the superseding one on createdAt to the millisecond", async () => {
+    // under the reverted code every run, and the warning this test asserts
+    // then never fires: a deterministic kill instead of a coin flip. Under
+    // the fix (`seq DESC`), insertion order decides regardless of what the
+    // ids happen to be, so `ddd4444` — inserted after `bbb2222` — still wins
+    // and the guard still correctly warns.
+    it("NUDGES the same case even when the new commit ties the superseding one on createdAt to the millisecond", async () => {
       const id = await createTask({ state: "in_review" });
       // Explicit, ordered timestamps rather than each artifact's own
       // insert-time default: `aaa1111` must be strictly OLDER than the tied
@@ -2829,10 +2839,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       for (const guard of MERGE_GUARDS) reg.register(guard);
-      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
-        guard: "merge.requires_approving_code_review",
-      });
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
     });
 
     it("a supersession cycle terminates rather than hanging the merge decision", async () => {
@@ -2912,11 +2921,13 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       for (const guard of MERGE_GUARDS) reg.register(guard);
-      await callTransition(id, "merged", reg);
-      expect(await readState(id)).toBe("merged");
+      const nudges = await mergedWithNudges(id, reg);
+      // Silent on BOTH clauses: neither the review nor the person's
+      // authorisation fell off the rewrite.
+      expect(nudges).toEqual([]);
     });
 
-    it("the refusal names the supersedesSha remedy, so the fix is discoverable from the refusal", async () => {
+    it("the warning names the supersedesSha remedy, so the fix is discoverable from the answer", async () => {
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "msg1111" });
       await createArtifact({
@@ -2929,9 +2940,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       for (const guard of MERGE_GUARDS) reg.register(guard);
-      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
-        message: expect.stringContaining("supersedesSha"),
-      });
+      const nudges = await mergedWithNudges(id, reg);
+      const review = nudges.find((n) => n.guard === "merge.requires_approving_code_review");
+      expect(review?.message).toContain("supersedesSha");
     });
   });
 
@@ -2952,7 +2963,7 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(await readState(id)).toBe("merged");
     });
 
-    it("REFUSES when the override names a different commit — not standing permission", async () => {
+    it("NUDGES when the override names a different commit — not standing permission", async () => {
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "ovr2222" });
       // The override was a judgement about one state of the code and must
@@ -2966,13 +2977,13 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       for (const guard of MERGE_GUARDS) reg.register(guard);
-      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
-        guard: "merge.requires_approving_code_review",
-      });
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+      expect(nudges[0]?.message).toContain("No approved code_review");
     });
 
-    it("REFUSES an override with an empty body — the row cannot vouch for itself", async () => {
+    it("still warns with an override that has an empty body — the row cannot vouch for itself", async () => {
       // Belt-and-braces at the GUARD, independent of the write-time check
       // below: this is the clause that decides a merge, and it must not rest
       // on a validator it does not itself run. Written through Prisma
@@ -2994,10 +3005,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       for (const guard of MERGE_GUARDS) reg.register(guard);
-      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
-        guard: "merge.requires_approving_code_review",
-      });
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
     });
 
     it("does NOT satisfy needs_approval — it widens review evidence, never authorisation", async () => {
@@ -3015,10 +3025,11 @@ describeIfDb("merge guards (#18), against Postgres", () => {
 
       const reg = new GuardRegistry();
       for (const guard of MERGE_GUARDS) reg.register(guard);
-      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
-        guard: "merge.requires_authorisation",
-      });
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await mergedWithNudges(id, reg);
+      // Exactly one, and it is the AUTHORISATION clause: the override did
+      // its narrow job — the review clause is silent — and nothing wider.
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
     });
 
     it("survives the squash that lands it, exactly as an approval does", async () => {
@@ -3074,17 +3085,25 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(reviews).toHaveLength(0);
     });
 
-    it("the refusal names the override route, and names one that exists", async () => {
-      // An earlier wording of this message named a remedy no surface
-      // implemented, and a session burned six attempts chasing it.
+    it("the warning names a route that exists, and offers no override of a wall that is gone", async () => {
+      // The old defect stays pinned: an earlier wording of this message
+      // named a remedy no surface implemented, and a session burned six
+      // attempts chasing it — every route a warning names must be one the
+      // caller can actually take. And the new posture is pinned too: an
+      // override is no longer advertised here as a way PAST the warning
+      // (`guards/merge.ts` keeps the reasoning — a nudge needs no escape
+      // hatch from a wall that is no longer there). It works by being
+      // recorded first, which the reasoned-override case above pins.
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "ovr8888" });
 
       const reg = new GuardRegistry();
       for (const guard of MERGE_GUARDS) reg.register(guard);
-      await expect(callTransition(id, "merged", reg)).rejects.toMatchObject({
-        message: expect.stringContaining("merge_override"),
-      });
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+      expect(nudges[0]?.message).toContain("Get the change reviewed now");
+      expect(nudges[0]?.message).not.toContain("merge_override");
     });
 
     it("ALLOWS an override pinned to a 7-char abbreviation of the full-length tip commit (e09aa150 site 4)", async () => {
