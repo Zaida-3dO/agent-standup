@@ -358,6 +358,39 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(nudges[0]?.message).toContain("NOT staleness");
     });
 
+    it("NUDGES an approval that named no commit against a real tip, and names the two honest exits", async () => {
+      // The merge was applied, so this warning's whole job is diagnosis:
+      // an approval that never recorded a commit cannot be shown to cover
+      // the tip — but claiming the item "has moved" would be false, and
+      // the cheapest way out of a false staleness claim is pinning the
+      // current sha onto a review that was not about it. With passage no
+      // longer at stake, the two honest remedies (a historical
+      // verification, or a reasoned merge_override for work that is not
+      // about a commit at all) must be discoverable from the answer
+      // itself.
+      const reg = new GuardRegistry();
+      reg.register(mergeRequiresApprovingCodeReviewGuard);
+      const id = await createTask({ state: "in_review" });
+      await createArtifact({
+        itemId: id,
+        kind: "code_review",
+        verdict: "approved",
+        reviewRound: 1,
+      });
+      await createArtifact({ itemId: id, kind: "commit", commitSha: "sha-tip" });
+      const nudges = await mergedWithNudges(id, reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+      const message = nudges[0]?.message ?? "";
+      expect(message).toContain("does not record which commit it applies to");
+      expect(message).toContain("This is not staleness");
+      expect(message).not.toContain("has moved since it was approved");
+      // The remedy-naming guarantee this branch exists to provide.
+      expect(message).toContain("historical_verification");
+      expect(message).toContain("merge_override");
+      expect(await readState(id)).toBe("merged");
+    });
+
     // ── The round limb names WHICH artifact kind moved the round ─────────
     //
     // Occurrence seven's shape, and the reason this whole row exists. An

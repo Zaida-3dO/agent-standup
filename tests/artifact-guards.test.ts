@@ -1,6 +1,11 @@
 // Row #17's guards: review-requested, plan-approval, and evidence-at-tip.
 // See docs/plans/MILESTONES.md #17, SCHEMA.md §6, §16.
 //
+// All three nudge rather than refuse: the transition is applied, and the
+// answer names the repair. None of these guards has a refusal path left —
+// the pure `shaMatches` bound tests at the bottom of this file still pin
+// the security floor directly.
+//
 // Runs against a real Postgres, like state-machine-transition.test.ts — the
 // claims here are about rows actually present (or absent) in `Artifact`
 // and `Event`, which an in-memory model cannot settle, and staleness in
@@ -20,12 +25,7 @@ import {
   shaMatches,
 } from "@/lib/service/guards";
 import { guardRegistry } from "@/lib/service/state-machine/guard";
-import {
-  defineOperation,
-  isServiceError,
-  prismaTransactionRunner,
-  ServiceRuntime,
-} from "@/lib/service";
+import { defineOperation, prismaTransactionRunner, ServiceRuntime } from "@/lib/service";
 import { OPERATION_REGISTRY } from "@/lib/service/registry";
 import { defaultSnapshot } from "@/lib/settings";
 import type { ServiceContext } from "@/lib/service/context";
@@ -164,22 +164,31 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
   });
 
   describe("artifact.review_requested — entering in_review", () => {
-    it("rejects entering in_review with no review_requested event", async () => {
+    it("warns entering in_review with no review_requested event, and the move lands", async () => {
       const reg = new GuardRegistry();
       reg.register(reviewRequestedGuard);
       const id = await createTask("executing");
-      const error = await callTransition(id, "in_review", reg).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect((error as { guard?: string }).guard).toBe("artifact.review_requested");
-      expect(await readState(id)).toBe("executing");
+      const applied = (await callTransition(id, "in_review", reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(applied.nudges).toEqual([
+        {
+          guard: "artifact.review_requested",
+          message: expect.stringContaining("No review has been requested yet"),
+        },
+      ]);
+      // The review can be requested on the spot, minutes later — which is
+      // why the ledger gap warns instead of stopping the item.
+      expect(await readState(id)).toBe("in_review");
     });
 
-    it("allows entering in_review once a review_requested event exists", async () => {
+    it("is fully silent entering in_review once a review_requested event exists", async () => {
       const reg = new GuardRegistry();
       reg.register(reviewRequestedGuard);
       const id = await createTask("executing");
       await createReviewRequestedEvent(id);
-      await callTransition(id, "in_review", reg);
+      const applied = (await callTransition(id, "in_review", reg)) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       expect(await readState(id)).toBe("in_review");
     });
 
@@ -187,39 +196,56 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
       const reg = new GuardRegistry();
       reg.register(reviewRequestedGuard);
       const id = await createTask("executing");
-      // No review_requested event exists, and the guard would reject if it
-      // ran — passing here proves appliesTo actually filters this pair out,
-      // not merely that the guard is lenient.
-      await callTransition(id, "someday", reg);
+      // No review_requested event exists, so this guard WOULD warn if it
+      // ran — the empty warning set proves appliesTo actually filters this
+      // pair out, not merely that the guard is lenient.
+      const applied = (await callTransition(id, "someday", reg)) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       expect(await readState(id)).toBe("someday");
     });
   });
 
   describe("artifact.plan_approval — executing from plan_review", () => {
-    it("rejects with no plan_review artifact at all", async () => {
+    it("warns with no plan_review artifact at all, and executing lands", async () => {
       const reg = new GuardRegistry();
       reg.register(planApprovalGuard);
       const id = await createTask("plan_review");
-      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("artifact.plan_approval");
-      expect(await readState(id)).toBe("plan_review");
+      const applied = (await callTransition(id, "executing", reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(applied.nudges).toEqual([
+        {
+          guard: "artifact.plan_approval",
+          message: expect.stringContaining("No approved plan_review artifact"),
+        },
+      ]);
+      // Executing without an approved plan is a process gap the item can
+      // close afterwards — approve the plan, or reopen if it comes back
+      // with changes — so it warns rather than gates.
+      expect(await readState(id)).toBe("executing");
     });
 
-    it("rejects a plan_review artifact whose verdict is changes_required, not approved", async () => {
+    it("warns for a plan_review artifact whose verdict is changes_required, not approved", async () => {
       const reg = new GuardRegistry();
       reg.register(planApprovalGuard);
       const id = await createTask("plan_review");
       await createArtifact({ itemId: id, kind: "plan_review", verdict: "changes_required" });
-      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("artifact.plan_approval");
+      const applied = (await callTransition(id, "executing", reg)) as {
+        nudges: { guard: string }[];
+      };
+      expect(applied.nudges).toEqual([
+        { guard: "artifact.plan_approval", message: expect.any(String) },
+      ]);
+      expect(await readState(id)).toBe("executing");
     });
 
-    it("allows executing from plan_review once an approved plan_review artifact exists", async () => {
+    it("is fully silent for executing from plan_review once an approved plan_review artifact exists", async () => {
       const reg = new GuardRegistry();
       reg.register(planApprovalGuard);
       const id = await createTask("plan_review");
       await createArtifact({ itemId: id, kind: "plan_review", verdict: "approved" });
-      await callTransition(id, "executing", reg);
+      const applied = (await callTransition(id, "executing", reg)) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
     });
   });
@@ -228,7 +254,7 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
     it("ALLOWS: an approval pinned to a 7-char abbreviation of the full-length tip commit", async () => {
       // The exact reproduction from row 73ff36bd: three approvals pinned to
       // `86f3af0`, a commit artifact pinned to the full 40-character sha for
-      // the same commit. Same commit, different lengths — must not refuse.
+      // the same commit. Same commit, different lengths — must not warn.
       const reg = new GuardRegistry();
       reg.register(evidenceAtTipGuard);
       const id = await createTask("plan_review");
@@ -247,7 +273,8 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         createdAt: new Date(),
       });
 
-      await callTransition(id, "executing", reg);
+      const applied = (await callTransition(id, "executing", reg)) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
     });
 
@@ -270,11 +297,12 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         createdAt: new Date(),
       });
 
-      await callTransition(id, "executing", reg);
+      const applied = (await callTransition(id, "executing", reg)) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
     });
 
-    it("REFUSES: an abbreviation of a DIFFERENT commit than the tip — prefix matching does not widen to unrelated shas", async () => {
+    it("NUDGES an abbreviation of a DIFFERENT commit than the tip — prefix matching does not widen to unrelated shas", async () => {
       const reg = new GuardRegistry();
       reg.register(evidenceAtTipGuard);
       const id = await createTask("plan_review");
@@ -286,7 +314,7 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         createdAt: new Date(Date.now() - 60_000),
       });
       // `deadbee` is not a prefix of the tip and the tip is not a prefix of
-      // it — genuinely a different commit, and must still be refused.
+      // it — genuinely a different commit, and the warning must still fire.
       await createArtifact({
         itemId: id,
         kind: "plan_review",
@@ -295,15 +323,23 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         createdAt: new Date(),
       });
 
-      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
-      expect(await readState(id)).toBe("plan_review");
+      const applied = (await callTransition(id, "executing", reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(applied.nudges).toEqual([
+        {
+          guard: "artifact.evidence_at_tip",
+          message: expect.stringContaining("has moved since it was approved"),
+        },
+      ]);
+      expect(await readState(id)).toBe("executing");
     });
 
-    it("REFUSES: a non-hex fixture value must not prefix-match another non-hex value it happens to start with", async () => {
+    it("NUDGES a non-hex fixture value — it must not prefix-match another non-hex value it happens to start with", async () => {
       // Guards the HEX_SHA gate itself: without it, "commit-a" would
       // startsWith-match "commit-ab" even though they are unrelated
-      // synthetic identifiers, not the same commit at two lengths.
+      // synthetic identifiers, not the same commit at two lengths. The
+      // warning is how that gate announces itself now.
       const reg = new GuardRegistry();
       reg.register(evidenceAtTipGuard);
       const id = await createTask("plan_review");
@@ -322,9 +358,16 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         createdAt: new Date(),
       });
 
-      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
-      expect(await readState(id)).toBe("plan_review");
+      const applied = (await callTransition(id, "executing", reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(applied.nudges).toEqual([
+        {
+          guard: "artifact.evidence_at_tip",
+          message: expect.stringContaining("not for the current tip commit"),
+        },
+      ]);
+      expect(await readState(id)).toBe("executing");
     });
 
     it("ALLOWS: an abbreviated approval matching a sha the tip's lineage stands in for, not just the tip itself", async () => {
@@ -356,18 +399,20 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         },
       });
 
-      await callTransition(id, "executing", reg);
+      const applied = (await callTransition(id, "executing", reg)) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
     });
   });
 
-  describe("artifact.evidence_at_tip — stale evidence from an earlier commit must be refused", () => {
-    it("REFUSES: an approval attached to a superseded commit, even though an approval exists", async () => {
+  describe("artifact.evidence_at_tip — stale evidence from an earlier commit warns as executing lands", () => {
+    it("NUDGES an approval attached to a superseded commit, even though an approval exists", async () => {
       // The load-bearing test for AC3. A plan is approved at commit A; the
       // branch then moves to commit B (a later `commit` artifact lands).
       // The approval still exists — plan_approval.ts's own guard would pass
       // it — but it is stale evidence for commit B, and this guard's job is
-      // to catch exactly that.
+      // to say so. Saying so is now a warning riding with the move, not a
+      // wall.
       const reg = new GuardRegistry();
       reg.register(evidenceAtTipGuard);
       const id = await createTask("plan_review");
@@ -390,9 +435,16 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         createdAt: later,
       });
 
-      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
-      expect(await readState(id)).toBe("plan_review");
+      const applied = (await callTransition(id, "executing", reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(applied.nudges).toEqual([
+        {
+          guard: "artifact.evidence_at_tip",
+          message: expect.stringContaining("has moved since it was approved"),
+        },
+      ]);
+      expect(await readState(id)).toBe("executing");
     });
 
     it("ALLOWS: an approval attached to the current tip commit", async () => {
@@ -414,7 +466,8 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         createdAt: new Date(),
       });
 
-      await callTransition(id, "executing", reg);
+      const applied = (await callTransition(id, "executing", reg)) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
     });
 
@@ -430,11 +483,12 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         commitSha: null,
       });
 
-      await callTransition(id, "executing", reg);
+      const applied = (await callTransition(id, "executing", reg)) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
     });
 
-    it("REFUSES: an approval with no commit_sha once a commit artifact exists — unverifiable against the real tip", async () => {
+    it("NUDGES an approval with no commit_sha once a commit artifact exists — unverifiable against the real tip", async () => {
       const reg = new GuardRegistry();
       reg.register(evidenceAtTipGuard);
       const id = await createTask("plan_review");
@@ -453,8 +507,15 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         createdAt: new Date(),
       });
 
-      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      const applied = (await callTransition(id, "executing", reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(applied.nudges).toHaveLength(1);
+      expect(applied.nudges[0]?.guard).toBe("artifact.evidence_at_tip");
+      // An approval naming no sha against a real tip is the ordering trap,
+      // and the warning says so rather than crying staleness.
+      expect(applied.nudges[0]?.message).toContain("not being judged stale");
+      expect(await readState(id)).toBe("executing");
     });
 
     it("ALLOWS: a genuinely fresh item — approved plan, no sha, no commit artifact — so the guard is not unsatisfiable at the only moment this transition is taken", async () => {
@@ -482,22 +543,23 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         commitSha: null,
       });
 
-      await callTransition(id, "executing", reg);
+      const applied = (await callTransition(id, "executing", reg)) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
     });
 
-    it("REFUSES an approval that names a sha on an item with no commit artifact, and blames the MISSING COMMIT rather than the approval", async () => {
+    it("NUDGES an approval that names a sha on an item with no commit artifact, and blames the MISSING COMMIT rather than the approval", async () => {
       // With no `commit` artifact the tip is null, and the only way to reach
-      // a refusal here is for the approval to have named a sha — so the
+      // a warning here is for the approval to have named a sha — so the
       // approval is the one thing that IS specific, and the item is what
-      // records nothing. A refusal saying the approval "does not record
+      // records nothing. A warning saying the approval "does not record
       // which commit it applies to" would therefore be describing the
       // situation backwards, and would send a reader to re-review a plan
       // that was approved perfectly well when the missing row is a commit
       // artifact.
       //
-      // The negative assertion is the load-bearing half: an allow/refuse or
-      // guard-id-only test passes against a wrong sentence indefinitely.
+      // The negative assertion is the load-bearing half: a silent-or-warns
+      // or guard-id-only test passes against a wrong sentence indefinitely.
       // Single-character mutation this catches:
       // negating `approvalNamesNoCommit` in evidence-at-tip.ts swaps the two
       // branches and fails both the positive and negative assertions below.
@@ -512,9 +574,12 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         commitSha: "commit-a",
       });
 
-      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
-      const message = (error as { message: string }).message;
+      const applied = (await callTransition(id, "executing", reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(applied.nudges).toHaveLength(1);
+      expect(applied.nudges[0]?.guard).toBe("artifact.evidence_at_tip");
+      const message = applied.nudges[0]?.message ?? "";
       // Names the real gap: the item records no commit artifact.
       expect(message).toContain("records no");
       expect(message).toContain("commit");
@@ -522,22 +587,22 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
       // claim staleness — nothing moved.
       expect(message).not.toContain("does not record which commit it applies to");
       expect(message).not.toContain("has moved since it was approved");
-      expect(await readState(id)).toBe("plan_review");
+      expect(await readState(id)).toBe("executing");
     });
 
-    it("ALLOWS a no-sha approval on a commitless item even when an OLDER approval named a sha — which is what makes the refusal above have only one meaning", async () => {
+    it("ALLOWS a no-sha approval on a commitless item even when an OLDER approval named a sha — which is what makes the warning above have only one meaning", async () => {
       // This is the test that licenses the single unconditional sentence in
-      // the no-tip refusal. `latestApprovalAtTip` walks every approval and
+      // the no-tip warning. `latestApprovalAtTip` walks every approval and
       // returns the first at the tip, so on a commitless item ANY approval
       // carrying a null sha satisfies the guard — regardless of what the
       // other approvals say. Enumerating all five no-commit shapes against
-      // Postgres showed the refusal fires only when EVERY approval names a
+      // Postgres showed the warning fires only when EVERY approval names a
       // sha, so "the approval does not record which commit it applies to"
       // was not merely backwards on this path, it was unreachable.
       //
       // Pinned because it is the premise the message depends on. If a change
       // ever makes a null-sha approval stop qualifying here, the no-tip
-      // refusal silently acquires a second meaning and its now-unconditional
+      // warning silently acquires a second meaning and its now-unconditional
       // sentence starts lying again — this test goes red first.
       // Single-character mutation it catches: `return candidate === null` to
       // `return candidate !== null` in shaMatchesTipOrLineage's tip-null arm.
@@ -560,7 +625,8 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         createdAt: new Date(),
       });
 
-      await callTransition(id, "executing", reg);
+      const applied = (await callTransition(id, "executing", reg)) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
     });
 
@@ -582,9 +648,9 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
     //
     // The pair below is the demonstration: identical item, identical
     // artifacts, identical shas — only the ORDER differs, and only one is
-    // refused. That is what makes this a sequence to document rather than a
-    // guard to redesign.
-    it("REFUSES when a commit artifact is recorded BEFORE the plan_review -> executing transition", async () => {
+    // warned about. That is what makes this a sequence to document rather
+    // than a guard to redesign.
+    it("NUDGES when a commit artifact is recorded BEFORE the plan_review -> executing transition", async () => {
       const reg = new GuardRegistry();
       reg.register(evidenceAtTipGuard);
       const id = await createTask("plan_review");
@@ -608,18 +674,21 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         createdAt: new Date(),
       });
 
-      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
-      expect(await readState(id)).toBe("plan_review");
+      const applied = (await callTransition(id, "executing", reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(applied.nudges).toHaveLength(1);
+      expect(applied.nudges[0]?.guard).toBe("artifact.evidence_at_tip");
+      expect(await readState(id)).toBe("executing");
 
       // ── The half that actually cost three sessions ──────────────────
       //
-      // The refusal must NOT say the plan moved. Nothing moved: the plan was
+      // The warning must NOT say the plan moved. Nothing moved: the plan was
       // approved before any commit existed and is unchanged. Three builders
       // read "get it re-reviewed", believed it, and spent a permanent
       // override each. The negative assertion is the load-bearing one — a
       // guard-id-only test passes against that wrong sentence forever.
-      const message = (error as { message: string }).message;
+      const message = applied.nudges[0]?.message ?? "";
       expect(message).not.toContain("has moved since it was approved");
       expect(message).not.toContain("get it re-reviewed");
       // And it must name the sequence that avoids it, since that is the
@@ -630,9 +699,9 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
 
     it("ALLOWS the identical artifacts when the transition happens BEFORE the commit is recorded", async () => {
       // Same item shape, same approval, same sha, same guard — the only
-      // difference is that the transition is taken first. It succeeds, which
-      // is what proves the refusal above is about sequence and not about the
-      // commit, the plan, or any property of the work.
+      // difference is that the transition is taken first. It passes in
+      // silence, which is what proves the warning above is about sequence
+      // and not about the commit, the plan, or any property of the work.
       //
       // This is the assertion that would fail if someone "fixed" the trap by
       // weakening the guard into passing both orders unconditionally, and
@@ -652,11 +721,13 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
 
       // Transition first — the approval is still current, because a
       // commitless item has a null tip and a null approval matches it.
-      await callTransition(id, "executing", reg);
+      const applied = (await callTransition(id, "executing", reg)) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
 
-      // The commit is recorded after, and nothing refuses it. The guard does
-      // not apply to any transition out of `executing`, so the work proceeds.
+      // The commit is recorded after, and nothing speaks up about it. The
+      // guard does not apply to any transition out of `executing`, so the
+      // work proceeds.
       await createArtifact({
         itemId: id,
         kind: "commit",
@@ -666,7 +737,7 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
       expect(await readState(id)).toBe("executing");
     });
 
-    it("still REFUSES a plan that genuinely changed after approval, whatever the ordering", async () => {
+    it("still NUDGES a plan that genuinely changed after approval, whatever the ordering", async () => {
       // The criterion that keeps the fix honest: the guard exists to catch a
       // plan approved at one commit and then moved. Documenting the ordering
       // must not quiet that case too.
@@ -674,7 +745,7 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
       // Distinguishable from the ordering trap by the approval naming a
       // DIFFERENT sha rather than none: the plan was reviewed at `a`, the
       // item is now at `b`, and no supersession link says `b` carries `a`'s
-      // reviewed work. That is real staleness and stays refused.
+      // reviewed work. That is real staleness and stays warned about.
       const reg = new GuardRegistry();
       reg.register(evidenceAtTipGuard);
       const id = await createTask("plan_review");
@@ -693,11 +764,14 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         createdAt: new Date(),
       });
 
-      const error = await callTransition(id, "executing", reg).catch((e: unknown) => e);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      const applied = (await callTransition(id, "executing", reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(applied.nudges).toHaveLength(1);
+      expect(applied.nudges[0]?.guard).toBe("artifact.evidence_at_tip");
       // And it says the plan MOVED, which is the true diagnosis here and the
       // one that distinguishes this from the ordering trap above.
-      const message = (error as { message: string }).message;
+      const message = applied.nudges[0]?.message ?? "";
       expect(message).toContain("has moved since it was approved");
       // It must NOT offer the ordering advice, which would be wrong here and
       // would send a reader to reorder two writes that are already in the
@@ -705,31 +779,39 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
       // this is what pins the two diagnoses as genuinely distinct rather
       // than one message widened to cover both.
       expect(message).not.toContain("plan_review -> executing");
-      expect(await readState(id)).toBe("plan_review");
+      expect(await readState(id)).toBe("executing");
     });
 
-    it("does not reject when there is no approval at all — that is plan_approval.ts's rejection, not this guard's", async () => {
+    it("stays silent when there is no approval at all — that warning belongs to plan_approval, not this guard", async () => {
       const reg = new GuardRegistry();
       reg.register(evidenceAtTipGuard);
       const id = await createTask("plan_review");
       // No plan_review artifact of any kind. This guard has nothing to say
       // about "never approved" — only about "approved, but stale" — so it
-      // must let the transition through on its own (planApprovalGuard,
-      // registered separately, is what actually gates existence).
-      await callTransition(id, "executing", reg);
+      // must stay silent on its own (planApprovalGuard, registered
+      // separately, is what actually warns about existence).
+      const applied = (await callTransition(id, "executing", reg)) as { nudges: unknown[] };
+      expect(applied.nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
     });
 
-    it("both guards together: an unapproved plan is rejected by plan_approval, a stale approval by evidence_at_tip", async () => {
+    it("both guards together: each cause gets exactly its own warning, and a fresh plan gets none", async () => {
+      // The two distinct causes stay two distinct warnings — "never
+      // approved" comes from plan_approval alone, "approved but stale"
+      // from evidence_at_tip alone, and a fully-current plan is silent on
+      // both. And every one of the three moves actually lands.
       const reg = new GuardRegistry();
       reg.register(planApprovalGuard);
       reg.register(evidenceAtTipGuard);
 
       const unapproved = await createTask("plan_review");
-      const unapprovedError = await callTransition(unapproved, "executing", reg).catch(
-        (e: unknown) => e,
-      );
-      expect((unapprovedError as { guard?: string }).guard).toBe("artifact.plan_approval");
+      const unapprovedApplied = (await callTransition(unapproved, "executing", reg)) as {
+        nudges: { guard: string }[];
+      };
+      expect(unapprovedApplied.nudges).toEqual([
+        { guard: "artifact.plan_approval", message: expect.any(String) },
+      ]);
+      expect(await readState(unapproved)).toBe("executing");
 
       const stale = await createTask("plan_review");
       await createArtifact({
@@ -745,8 +827,13 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         commitSha: "commit-b",
         createdAt: new Date(),
       });
-      const staleError = await callTransition(stale, "executing", reg).catch((e: unknown) => e);
-      expect((staleError as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      const staleApplied = (await callTransition(stale, "executing", reg)) as {
+        nudges: { guard: string }[];
+      };
+      expect(staleApplied.nudges).toEqual([
+        { guard: "artifact.evidence_at_tip", message: expect.any(String) },
+      ]);
+      expect(await readState(stale)).toBe("executing");
 
       const fresh = await createTask("plan_review");
       await createArtifact({
@@ -762,7 +849,10 @@ describeIfDb("artifact guards (#17), against Postgres", () => {
         commitSha: "commit-a",
         createdAt: new Date(),
       });
-      await callTransition(fresh, "executing", reg);
+      const freshApplied = (await callTransition(fresh, "executing", reg)) as {
+        nudges: unknown[];
+      };
+      expect(freshApplied.nudges).toEqual([]);
       expect(await readState(fresh)).toBe("executing");
     });
   });
