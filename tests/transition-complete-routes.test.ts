@@ -164,17 +164,22 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
     });
 
     it("a guard rejection surfaces as 422 through the route, not 500", async () => {
+      // Provoked on a guard that still answers with a wall: entering a
+      // completed state without a summary. The move this test used to
+      // provoke by omission (a blocked transition with no fields) is a
+      // nudge now, so it would answer 200 — pinned where that guard is
+      // tested.
       const id = await createItemViaRoute();
 
       const response = await transitionRoute.POST(
-        jsonRequest(`http://localhost/api/items/${id}/transition`, "POST", { to: "blocked" }),
+        jsonRequest(`http://localhost/api/items/${id}/transition`, "POST", { to: "wont_do" }),
         { params: Promise.resolve({ id }) },
       );
 
       expect(response.status).toBe(422);
       const payload = (await response.json()) as { error: { code: string; guard: string } };
       expect(payload.error.code).toBe("guard_rejected");
-      expect(payload.error.guard).toBe("state-machine.blocked_required_fields");
+      expect(payload.error.guard).toBe("summaries.required_and_valid");
       expect(await readState(id)).toBe("on_deck"); // untouched — still the create default
     });
 
@@ -227,9 +232,10 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
     it("a rehearsed rejection is still 200 (it's a reported outcome, not an HTTP error)", async () => {
       const id = await createItemViaRoute();
 
+      // A guard that still refuses — a completed state with no summary.
       const response = await transitionRoute.POST(
         jsonRequest(`http://localhost/api/items/${id}/transition?dry_run=true`, "POST", {
-          to: "blocked",
+          to: "wont_do",
         }),
         { params: Promise.resolve({ id }) },
       );
@@ -239,7 +245,7 @@ describeIfDb("transition and complete HTTP routes against Postgres", () => {
         outcome: { allowed: boolean; rejection?: { guard: string } };
       };
       expect(payload.outcome.allowed).toBe(false);
-      expect(payload.outcome.rejection?.guard).toBe("state-machine.blocked_required_fields");
+      expect(payload.outcome.rejection?.guard).toBe("summaries.required_and_valid");
       expect(await readState(id)).toBe("on_deck");
     });
 

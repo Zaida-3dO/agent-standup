@@ -212,16 +212,21 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
       expect(events[0]?.payload).toEqual({ from: "executing", to: "someday" });
     });
 
-    it("rejects an illegal move with the taxonomy's guard_rejected code, naming the guard", async () => {
-      const id = await createTask({ state: "executing" });
+    it("still rejects a malformed call with the taxonomy's guard_rejected code, naming the guard", async () => {
+      // The `guard_rejected` error shape stays pinned on the guards that
+      // still answer with a wall — a completion entering a completed state
+      // without answering at all. Process advice (the blocked fields this
+      // test used to provoke by omission) is a nudge now, asserted where
+      // the guard itself is tested.
+      const id = await createTask({ state: "in_review" });
       const error = (await runtime
-        .call("transition_item", { id, to: "blocked" })
+        .call("transition_item", { id, to: "wont_do" })
         .catch((e: unknown) => e)) as { code?: string; guard?: string };
 
       expect(error.code).toBe("guard_rejected");
-      expect(error.guard).toBe("state-machine.blocked_required_fields");
+      expect(error.guard).toBe("summaries.required_and_valid");
       // Not written — the guard refused before applyTransition's write step.
-      expect(await readState(id)).toBe("executing");
+      expect(await readState(id)).toBe("in_review");
     });
 
     it("accepts blocked_reason and friends through `fields`, persisting them", async () => {
@@ -322,12 +327,15 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
     });
 
     it("reports a rejected outcome via dryRun, still without writing anything", async () => {
-      const id = await createTask({ state: "executing" });
-      const outcome = await callDryRun({ id, to: "blocked" });
+      // Provoked on a guard that still refuses: a completion with no
+      // summary at all. Process advice would now rehearse as
+      // `allowed: true` carrying nudges — pinned elsewhere, not here.
+      const id = await createTask({ state: "in_review" });
+      const outcome = await callDryRun({ id, to: "wont_do" });
 
       expect(outcome.allowed).toBe(false);
-      expect(outcome.rejection?.guard).toBe("state-machine.blocked_required_fields");
-      expect(await readState(id)).toBe("executing");
+      expect(outcome.rejection?.guard).toBe("summaries.required_and_valid");
+      expect(await readState(id)).toBe("in_review");
       expect(await eventsFor(id)).toHaveLength(0);
     });
 
@@ -681,16 +689,23 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
       expect(error.code).toBe("invalid_input");
     });
 
-    it("hierarchy guard still applies: cannot complete while a child is actionable", async () => {
+    it("hierarchy guard still speaks: completing with an actionable child lands, warned by name", async () => {
       const parent = await createTask({ state: "in_review" });
       await createTask({ state: "executing", parentId: parent });
+      // Satisfy the merge clauses first, so the ONE warning this answer
+      // carries is the hierarchy one.
+      await satisfyMergeGuards(parent);
 
-      const error = (await runtime
-        .call("complete_item", { id: parent, to: "merged", summary: validSummary() })
-        .catch((e: unknown) => e)) as { code?: string; guard?: string };
+      const result = (await runtime.call("complete_item", {
+        id: parent,
+        to: "merged",
+        summary: validSummary(),
+      })) as { item: { state: string }; nudges?: { guard: string; message: string }[] };
 
-      expect(error.code).toBe("guard_rejected");
-      expect(error.guard).toBe("hierarchy.no_finish_with_actionable_child");
+      expect(result.item.state).toBe("merged");
+      expect(result.nudges).toHaveLength(1);
+      expect(result.nudges?.[0]?.guard).toBe("hierarchy.no_finish_with_actionable_child");
+      expect(result.nudges?.[0]?.message).toContain("(executing)");
     });
 
     it("completing a non-existent item returns not_found, not a 500-shaped internal error", async () => {

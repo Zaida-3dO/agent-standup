@@ -1,5 +1,7 @@
-// Guard — hierarchy: a parent cannot finish while a child is still
-// actionable. See docs/plans/MILESTONES.md #19, SCHEMA.md §5a, §1.1.
+// Guard — hierarchy: a parent that finishes while a child is still
+// actionable is nudged, not blocked — the finish lands and the answer
+// names the open children. See docs/plans/MILESTONES.md #19, SCHEMA.md
+// §5a, §1.1.
 //
 // Runs against a real Postgres, like `state-machine-transition.test.ts` —
 // the claims here are about rows actually written or refused, which an
@@ -120,36 +122,37 @@ describeIfDb("the hierarchy guard, against Postgres", () => {
     return rehearseTransition(newCtx(), { itemId, to }, reg);
   }
 
-  describe("criterion 1 — refuses to finish while a child is actionable", () => {
+  describe("criterion 1 — the finish lands with a nudge naming the actionable child", () => {
     it.each(FINISHING_STATES)(
-      "rejects entering %s when a direct child is executing",
+      "warns entering %s when a direct child is executing, and lands anyway",
       async (to) => {
         const parent = await createItem({ kind: "task", state: "in_review" });
         await createItem({ kind: "subtask", state: "executing", parentId: parent });
 
-        const error = await transition(parent, to).catch((e: unknown) => e);
-        expect((error as { code?: string }).code).toBe("guard_rejected");
-        expect((error as { guard?: string }).guard).toBe(
-          "hierarchy.no_finish_with_actionable_child",
-        );
-        // The database, read directly, proves the refusal actually stopped
-        // the write — not merely that the promise rejected.
-        expect(await readState(parent)).toBe("in_review");
+        const applied = await transition(parent, to);
+        expect(applied.nudges).toEqual([
+          {
+            guard: "hierarchy.no_finish_with_actionable_child",
+            message: expect.stringContaining("(executing)"),
+          },
+        ]);
+        // The database, read directly, proves the move actually landed —
+        // the warning travels with the write rather than standing in for
+        // stopping it.
+        expect(await readState(parent)).toBe(to);
       },
     );
 
-    it("names the guard's own id, not a generic rejection", async () => {
+    it("names the guard's own id, not a generic warning", async () => {
       const parent = await createItem({ kind: "task", state: "in_review" });
       await createItem({ kind: "subtask", state: "on_deck", parentId: parent });
-      const error = (await transition(parent, "merged").catch((e: unknown) => e)) as {
-        guard?: string;
-        fields?: readonly string[];
-      };
-      expect(error.guard).toBe("hierarchy.no_finish_with_actionable_child");
-      expect(error.fields).toContain("parent_id");
+      const applied = await transition(parent, "merged");
+      expect(applied.nudges).toHaveLength(1);
+      expect(applied.nudges[0]?.guard).toBe("hierarchy.no_finish_with_actionable_child");
+      expect(applied.nudges[0]?.message).toContain("(on_deck)");
     });
 
-    it("rejects when only ONE of several children is actionable — 'any', not 'all'", async () => {
+    it("warns when only ONE of several children is actionable — 'any', not 'all' — and names only that one", async () => {
       // Distinguishes `.some()` from `.every()`: with a single-child fixture
       // the two agree in every case, so a mutation from "any child
       // actionable" to "all children actionable" survives unless a test
@@ -159,9 +162,13 @@ describeIfDb("the hierarchy guard, against Postgres", () => {
       await createItem({ kind: "subtask", state: "wont_do", parentId: parent });
       await createItem({ kind: "subtask", state: "executing", parentId: parent });
 
-      const error = await transition(parent, "merged").catch((e: unknown) => e);
-      expect((error as { code?: string }).code).toBe("guard_rejected");
-      expect(await readState(parent)).toBe("in_review");
+      const applied = await transition(parent, "merged");
+      expect(applied.nudges).toHaveLength(1);
+      // The warning names the open child and stays off the closed ones.
+      expect(applied.nudges[0]?.message).toContain("(executing)");
+      expect(applied.nudges[0]?.message).not.toContain("(merged)");
+      expect(applied.nudges[0]?.message).not.toContain("(wont_do)");
+      expect(await readState(parent)).toBe("merged");
     });
   });
 
@@ -209,22 +216,24 @@ describeIfDb("the hierarchy guard, against Postgres", () => {
 
   describe("criterion 3 — the actionable/non-actionable boundary, exhaustively", () => {
     it.each(ACTIONABLE_STATES)(
-      "a child in '%s' blocks the parent from finishing",
+      "a child in '%s' warns the parent's finish, which lands anyway",
       async (childState) => {
         const parent = await createItem({ kind: "task", state: "in_review" });
         await createItem({ kind: "subtask", state: childState, parentId: parent });
-        const error = await transition(parent, "merged").catch((e: unknown) => e);
-        expect((error as { code?: string }).code).toBe("guard_rejected");
-        expect(await readState(parent)).toBe("in_review");
+        const applied = await transition(parent, "merged");
+        expect(applied.nudges).toHaveLength(1);
+        expect(applied.nudges[0]?.message).toContain(`(${childState})`);
+        expect(await readState(parent)).toBe("merged");
       },
     );
 
     it.each(NON_ACTIONABLE_STATES)(
-      "a child in '%s' does NOT block the parent from finishing",
+      "a child in '%s' does NOT speak at all on the parent's finish",
       async (childState) => {
         const parent = await createItem({ kind: "task", state: "in_review" });
         await createItem({ kind: "subtask", state: childState, parentId: parent });
-        await transition(parent, "merged");
+        const applied = await transition(parent, "merged");
+        expect(applied.nudges).toEqual([]);
         expect(await readState(parent)).toBe("merged");
       },
     );
@@ -241,14 +250,14 @@ describeIfDb("the hierarchy guard, against Postgres", () => {
   });
 
   describe("criterion — depth: does the rule reach a grandchild", () => {
-    it("a live grandchild blocks the grandparent, transitively via the blocked middle child", async () => {
+    it("a live grandchild surfaces at the middle level, and once the middle finishes the grandparent is silent", async () => {
       // Depth decision, stated: this guard queries **direct children only**
-      // (see hierarchy.ts's `hasActionableChild` doc). It reaches a
-      // grandchild transitively rather than directly — the middle child
-      // cannot itself finish while ITS child (the grandchild) is
-      // actionable, so the middle child stays actionable, which in turn
-      // blocks the top-level parent. This test proves that chain actually
-      // holds, not merely that a one-level check exists.
+      // (see hierarchy.ts's `hasActionableChild` doc). Under the nudge
+      // posture the transitive block is gone by design — the middle child
+      // finishes with a warning naming its own open child, and that is
+      // where the reach ends. What is pinned here: the warning names the
+      // right rows one level at a time, and once the middle child has
+      // finished, the grandparent's finish has nothing left to say.
       const grandparent = await createItem({ kind: "task", state: "in_review" });
       const middle = await createItem({
         kind: "subtask",
@@ -257,19 +266,20 @@ describeIfDb("the hierarchy guard, against Postgres", () => {
       });
       await createItem({ kind: "subtask", state: "executing", parentId: middle });
 
-      // The middle child cannot finish — its own child (the grandchild) is
-      // actionable.
-      const middleError = await transition(middle, "merged").catch((e: unknown) => e);
-      expect((middleError as { code?: string }).code).toBe("guard_rejected");
-      expect(await readState(middle)).toBe("in_review");
+      // The middle child's own child (the grandchild) is actionable, so
+      // the warning the middle earns names the grandchild by state.
+      const middleApplied = await transition(middle, "merged");
+      expect(middleApplied.nudges).toHaveLength(1);
+      expect(middleApplied.nudges[0]?.message).toContain("(executing)");
+      expect(await readState(middle)).toBe("merged");
 
-      // Because the middle child could not finish, it is still actionable
-      // (`in_review`) — so the grandparent cannot finish either, even
-      // though this guard only ever queried ONE level (grandparent →
-      // middle), never the grandchild directly.
-      const grandparentError = await transition(grandparent, "merged").catch((e: unknown) => e);
-      expect((grandparentError as { code?: string }).code).toBe("guard_rejected");
-      expect(await readState(grandparent)).toBe("in_review");
+      // The middle child finished — the grandparent's only child is no
+      // longer actionable, and this guard only ever queried ONE level
+      // (grandparent → middle), never the grandchild directly. Now there
+      // is nothing for it to say at either level.
+      const grandparentApplied = await transition(grandparent, "merged");
+      expect(grandparentApplied.nudges).toEqual([]);
+      expect(await readState(grandparent)).toBe("merged");
     });
 
     it("once the grandchild resolves and the middle child finishes, the grandparent can finish too", async () => {
@@ -387,13 +397,18 @@ describeIfDb("the hierarchy guard, against Postgres", () => {
   });
 
   describe("rehearsal", () => {
-    it("reports the rejection without writing anything", async () => {
+    it("reports the warning without writing anything", async () => {
       const parent = await createItem({ kind: "task", state: "in_review" });
       await createItem({ kind: "subtask", state: "executing", parentId: parent });
 
       const outcome = await rehearse(parent, "merged");
-      expect(outcome.allowed).toBe(false);
-      expect(outcome.rejection?.guard).toBe("hierarchy.no_finish_with_actionable_child");
+      expect(outcome.allowed).toBe(true);
+      expect(outcome.nudges).toEqual([
+        {
+          guard: "hierarchy.no_finish_with_actionable_child",
+          message: expect.stringContaining("still actionable"),
+        },
+      ]);
       expect(await readState(parent)).toBe("in_review");
     });
   });
