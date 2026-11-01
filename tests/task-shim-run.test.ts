@@ -566,30 +566,35 @@ describe("status — the honesty test", () => {
   });
 
   it("surfaces a guard rejection verbatim rather than papering over it", async () => {
-    // A bare status change into `paused` has no `pause_reason`/
-    // `resume_condition` to give the new guard — this surface never carried
-    // them. The honest behaviour is reporting exactly that refusal, not
-    // silently succeeding and not inventing the missing fields.
+    // Which moves the service still refuses is the guards' own business —
+    // one that must is a bare status change to `done`: `merged` is a
+    // completing state and this surface has never carried a completion
+    // summary. The honest behaviour is reporting exactly that refusal, not
+    // silently succeeding and not inventing a summary. (A missing
+    // pause_reason, the case this test used to stub, is a nudge now: 200,
+    // with the warning on the outcome rather than the error.)
     const fetchImpl = async () =>
       json(
         {
           error: {
             code: "guard_rejected",
-            message: "paused requires pause_reason.",
-            fields: ["pause_reason"],
-            guard: "state-machine.paused_required_fields",
+            message: "A summary is required to complete this item — closing as merged needs one.",
+            fields: ["summary"],
+            guard: "summaries.required_and_valid",
           },
         },
         422,
       );
     const { err, sinks } = streams();
-    const code = await run(["status", "item-1", "waiting"], {
+    const code = await run(["status", "item-1", "done"], {
       env,
       fetch: fetchImpl,
       streams: sinks,
     });
     expect(code).toBe(1);
-    expect(err.join("")).toBe(`${DEPRECATION_WARNING}\nError: paused requires pause_reason.\n`);
+    expect(err.join("")).toBe(
+      `${DEPRECATION_WARNING}\nError: A summary is required to complete this item — closing as merged needs one.\n`,
+    );
   });
 
   it("maps done to merged", async () => {
