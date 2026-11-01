@@ -12,6 +12,7 @@ import {
   GuardRegistry,
   ProjectHasNoStateError,
   applyTransition,
+  guardNudged,
   guardOk,
   guardRejected,
   isItemState,
@@ -283,6 +284,39 @@ describeIfDb("the state machine, against Postgres", () => {
       expect(order).toEqual(["first"]); // "second" never ran
     });
 
+    it("a nudging guard lets the write land, and the outcome carries the nudge", async () => {
+      // The state-machine half of the nudge rule, and the two halves are
+      // deliberately checked in this order: first that the ROW moved — a
+      // warning that silently stopped the write too would be the old
+      // refusal wearing a friendlier name — then that the answer says what
+      // the warning was. Rehearsal carries the same advice and still writes
+      // nothing.
+      const reason = "Finished with one child still actionable.";
+      const reg = new GuardRegistry();
+      reg.register({
+        id: "test.nudge_open_child",
+        description: "test",
+        appliesTo: () => true,
+        check: () => guardNudged(reason),
+      });
+
+      const id = await createTask({ state: "executing" });
+      const applied = (await callTransition("apply", id, "someday", reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(await readState(id)).toBe("someday");
+      expect(applied.nudges).toEqual([{ guard: "test.nudge_open_child", message: reason }]);
+
+      const other = await createTask({ state: "executing" });
+      const rehearsed = (await callTransition("rehearse", other, "someday", reg)) as {
+        allowed: boolean;
+        nudges?: { guard: string; message: string }[];
+      };
+      expect(rehearsed.allowed).toBe(true);
+      expect(rehearsed.nudges).toEqual([{ guard: "test.nudge_open_child", message: reason }]);
+      expect(await readState(other)).toBe("executing");
+    });
+
     it("rejects a duplicate guard id rather than silently shadowing the first", () => {
       const reg = new GuardRegistry();
       const guard: Guard = {
@@ -303,7 +337,7 @@ describeIfDb("the state machine, against Postgres", () => {
         appliesTo: () => true,
         check: () => guardRejected("no", { fields: ["state"] }),
       });
-      const error = await runGuards(reg.applicable("executing", "someday"), {
+      const outcome = await runGuards(reg.applicable("executing", "someday"), {
         item: {
           id: "x",
           kind: "task",
@@ -323,6 +357,8 @@ describeIfDb("the state machine, against Postgres", () => {
         db: {} as never,
         settings: defaultSnapshot(),
       });
+      const error = outcome.rejection;
+      expect(outcome.nudges).toEqual([]);
       expect(isServiceError(error)).toBe(true);
       expect(error?.code).toBe("guard_rejected");
       expect(error?.guard).toBe("test.always");

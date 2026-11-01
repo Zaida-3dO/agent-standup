@@ -59,12 +59,14 @@ interface CaughtError {
 }
 
 describe("the accepted-key table itself", () => {
-  it("declares exactly eight keys, six of which write a column", () => {
+  it("declares exactly ten keys, six of which write a column", () => {
     // The count is the thing three separate derivations got wrong — nine
     // (counting an `Array.prototype.push` call as a key) and six (deriving
-    // from the UPDATE statement, which drops the two keys guards read but
-    // no column stores). Pinning both numbers makes either mistake fail
-    // here rather than in a review.
+    // from the UPDATE statement, which drops the keys guards read but no
+    // column stores). Pinning both numbers makes either mistake fail here
+    // rather than in a review. The last two (`merge_proof`, `skip_proof`)
+    // ride with the merge-evidence nudge: they write nothing, and only
+    // `merge.requires_commit` reads them.
     expect(TRANSITION_FIELD_KEYS).toEqual([
       "blocked_reason",
       "blocked_on_type",
@@ -74,6 +76,8 @@ describe("the accepted-key table itself", () => {
       "resume_condition",
       "summary",
       "merge_rationale",
+      "merge_proof",
+      "skip_proof",
     ]);
     expect(TRANSITION_FIELDS.filter((f) => f.writesColumn)).toHaveLength(6);
   });
@@ -364,6 +368,23 @@ describeIfDb("fields acceptance through the real operations", () => {
       // about `merge_rationale` being an unacceptable key.
       expect(error.code).not.toBe("invalid_input");
       expect(error.fields ?? []).not.toContain("merge_rationale");
+    });
+
+    it("still accepts merge_proof and skip_proof, the merge-evidence proof keys", async () => {
+      // The two keys that ride with the merge-evidence nudge: neither
+      // writes a column, and only `merge.requires_commit` reads them.
+      // Same posture as the `merge_rationale` test — proof they clear the
+      // door is that no refusal names them.
+      const id = await createTask("in_review");
+      const error = await failedTransition({
+        id,
+        to: "merged",
+        fields: { merge_proof: "PR #4111: rate limit on the public endpoint", skip_proof: true },
+      });
+
+      expect(error.code).not.toBe("invalid_input");
+      expect(error.fields ?? []).not.toContain("merge_proof");
+      expect(error.fields ?? []).not.toContain("skip_proof");
     });
   });
 

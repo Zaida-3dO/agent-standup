@@ -11,9 +11,16 @@
 // Everything here runs against a scratch `GuardRegistry` and a stub
 // transaction handle: `runGuards` issues no query of its own, so none of
 // this needs a database.
+//
+// The file covers **nudges** as well as refusals now, because both are the
+// guard layer speaking and one call reports both: `runGuards` answers
+// `{rejection?, nudges}`, a refusal still stops the run where it is while a
+// nudge does not. Those two behaviours are what most of the shape tests
+// below are about.
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   GuardRegistry,
+  guardNudged,
   guardOk,
   guardRejected,
   runGuards,
@@ -38,6 +45,7 @@ const ITEM: GuardableItem = {
 };
 
 const MSG = "Guard refused a transition.";
+const NUDGE_MSG = "Guard nudged an applied transition.";
 
 function input(overrides: { requestId?: string } = {}) {
   return {
@@ -172,10 +180,12 @@ describe("runGuards logging", () => {
       check: () => guardOk,
     });
 
-    const rejection = await runGuards(registry.applicable("executing", "merged"), input());
+    const outcome = await runGuards(registry.applicable("executing", "merged"), input());
 
-    expect(rejection).toBeUndefined();
+    expect(outcome.rejection).toBeUndefined();
+    expect(outcome.nudges).toEqual([]);
     expect(oneRecord(logs.stderr(), MSG)).toBeUndefined();
+    expect(oneRecord(logs.stderr(), NUDGE_MSG)).toBeUndefined();
   });
 
   test("writes NOTHING when no guard applies to the pair", async () => {
@@ -191,19 +201,93 @@ describe("runGuards logging", () => {
     await runGuards(registry.applicable("executing", "merged"), input());
 
     expect(oneRecord(logs.stderr(), MSG)).toBeUndefined();
+    expect(oneRecord(logs.stderr(), NUDGE_MSG)).toBeUndefined();
+  });
+
+  test("logs the nudge too, WITH the reasoning that only exists here", async () => {
+    // The nudge line answers "why did that move come back with a warning"
+    // from the log alone. Same field set a refusal carries — only the
+    // message differs — because what an adapter sees is the same on both
+    // paths while the item, the pair and the `requestId` are not.
+    const reason = "The finish landed while a child was still actionable.";
+    const registry = registryWith({
+      id: "test.child_open",
+      description: "test",
+      appliesTo: () => true,
+      check: () => guardNudged(reason),
+    });
+
+    const outcome = await runGuards(
+      registry.applicable("executing", "merged"),
+      input({ requestId: "req-7" }),
+    );
+
+    expect(outcome.rejection).toBeUndefined();
+    expect(outcome.nudges).toEqual([{ guard: "test.child_open", message: reason }]);
+
+    const record = oneRecord(logs.stderr(), NUDGE_MSG);
+    expect(record?.level).toBe("info");
+    expect(record?.guard).toBe("test.child_open");
+    expect(record?.itemId).toBe("item-under-test");
+    expect(record?.from).toBe("executing");
+    expect(record?.to).toBe("merged");
+    expect(record?.reason).toBe(reason);
+    expect(record?.requestId).toBe("req-7");
+    expect(oneRecord(logs.stderr(), MSG)).toBeUndefined();
+  });
+
+  test("every applicable nudging guard speaks — a nudge does not stop the run", async () => {
+    // The other direction of the rule the refusal tests pin: a rejection
+    // breaks off the evaluation, nudges do not. Every applicable guard gets
+    // to speak, in registration order, so the caller receives the whole set
+    // of advice rather than only the first complaint — one missing piece of
+    // evidence repaired should not hide that a second is still missing.
+    const registry = registryWith(
+      {
+        id: "test.nudge_a",
+        description: "test",
+        appliesTo: () => true,
+        check: () => guardNudged("a first"),
+      },
+      {
+        id: "test.silent",
+        description: "test",
+        appliesTo: () => true,
+        check: () => guardOk,
+      },
+      {
+        id: "test.nudge_b",
+        description: "test",
+        appliesTo: () => true,
+        check: () => guardNudged("b second"),
+      },
+    );
+
+    const outcome = await runGuards(registry.applicable("executing", "merged"), input());
+
+    expect(outcome.rejection).toBeUndefined();
+    expect(outcome.nudges).toEqual([
+      { guard: "test.nudge_a", message: "a first" },
+      { guard: "test.nudge_b", message: "b second" },
+    ]);
+    const lines = logs.stderr().filter((record) => record.msg === NUDGE_MSG);
+    expect(lines.map((line) => line.guard)).toEqual(["test.nudge_a", "test.nudge_b"]);
+    expect(logs.stdout()).toEqual([]);
   });
 
   test("logs ONE line for the guard that fired, not one per guard evaluated", async () => {
     // `runGuards` stops at the first rejection so that the rejection a
     // caller receives is unambiguously one rule's. The log has to agree:
     // two lines would suggest two rules refused, and the second guard here
-    // never even ran.
+    // never even ran. The first guard's nudge is the exception that proves
+    // the rule's shape: advice never stops an evaluation, so its line was
+    // already written before the wall came down.
     const registry = registryWith(
       {
         id: "test.first",
         description: "test",
         appliesTo: () => true,
-        check: () => guardOk,
+        check: () => guardNudged("a warning that stopped nothing"),
       },
       {
         id: "test.second",
@@ -219,11 +303,15 @@ describe("runGuards logging", () => {
       },
     );
 
-    await runGuards(registry.applicable("executing", "merged"), input());
+    const outcome = await runGuards(registry.applicable("executing", "merged"), input());
 
     // `oneRecord` throws on more than one match, which is half the
-    // assertion; the guard id is the other half.
+    // assertion; the guard ids are the other half.
     expect(oneRecord(logs.stderr(), MSG)?.guard).toBe("test.second");
+    expect(oneRecord(logs.stderr(), NUDGE_MSG)?.guard).toBe("test.first");
+    expect(outcome.nudges).toEqual([
+      { guard: "test.first", message: "a warning that stopped nothing" },
+    ]);
   });
 
   test("omits fields and details when the guard supplied none", async () => {
@@ -242,9 +330,11 @@ describe("runGuards logging", () => {
     expect(record?.reason).toBe("bare refusal");
   });
 
-  test("still returns the GuardRejectedError it always did", async () => {
-    // Logging is additive. A log line that came at the cost of the
-    // rejection's shape would break every adapter's rendering of it.
+  test("still hands back the GuardRejectedError it always did", async () => {
+    // Logging and nudging are additive. A change that came at the cost of
+    // the rejection's shape would break every adapter's rendering of it.
+    // `runGuards` now answers a `{rejection?, nudges}` pair; the error
+    // inside that pair is the same object, unchanged.
     const registry = registryWith({
       id: "test.unchanged",
       description: "test",
@@ -252,11 +342,12 @@ describe("runGuards logging", () => {
       check: () => guardRejected("no", { fields: ["state"], details: { why: "because" } }),
     });
 
-    const rejection = await runGuards(registry.applicable("executing", "merged"), input());
+    const outcome = await runGuards(registry.applicable("executing", "merged"), input());
 
-    expect(rejection?.guard).toBe("test.unchanged");
-    expect(rejection?.code).toBe("guard_rejected");
-    expect(rejection?.fields).toEqual(["state"]);
-    expect(rejection?.details).toEqual({ why: "because" });
+    expect(outcome.nudges).toEqual([]);
+    expect(outcome.rejection?.guard).toBe("test.unchanged");
+    expect(outcome.rejection?.code).toBe("guard_rejected");
+    expect(outcome.rejection?.fields).toEqual(["state"]);
+    expect(outcome.rejection?.details).toEqual({ why: "because" });
   });
 });
