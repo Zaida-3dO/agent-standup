@@ -253,9 +253,10 @@ const contract = {
       fields: ["fields", "summary"],
       rule:
         "`fields` carries what the target state's guards read: `merge_rationale` for an " +
-        "`agent_judgement` merge, `merge_proof` (a sentence or the PR title) or `skip_proof: " +
-        "true` to state the proof position on the call when completing to `merged`. It may not " +
-        "contain `summary` — pass that in the top-level `summary` field.",
+        "`agent_judgement` merge; when completing to `merged`, `fields: { merge_proof: ... }` " +
+        "(a sentence or the PR title) or `fields: { skip_proof: true }` states the proof " +
+        "position on the call. It may not contain `summary` — pass that in the top-level " +
+        "`summary` field.",
     },
     {
       fields: ["to"],
@@ -263,8 +264,9 @@ const contract = {
         `\`to\` must be one of the completed states (${COMPLETED_STATES.join(", ")}), and the ` +
         `transition's own guards still apply on top of the summary: completing to \`merged\` ` +
         `without merge evidence on the record goes through and answers with a nudge naming ` +
-        `what is missing — proof may ride the call (\`merge_proof\`, \`skip_proof\`) or be ` +
-        `recorded after it. \`to\` also selects which summary field is mandatory — \`shipped\` ` +
+        `what is missing — proof may ride the call (\`fields: { merge_proof: ... }\` or ` +
+        `\`fields: { skip_proof: true }\`) or be recorded after it. \`to\` also selects which ` +
+        `summary field is mandatory — \`shipped\` ` +
         `for the states that delivered something, \`decision\` for ${NON_DELIVERY_STATES.join(" and ")}, ` +
         `which assert the opposite.`,
     },

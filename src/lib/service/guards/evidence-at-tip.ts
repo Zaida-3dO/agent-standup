@@ -129,7 +129,7 @@ export const evidenceAtTipGuard: Guard = {
       // `review_evidence_override` still exists for the ordering-trap case
       // — recording one with a stated reason is how a caller says "nothing
       // has actually moved" and stops this warning repeating on every later
-      // evaluation; it just no longer has to buy passage.
+      // evaluation; it is not what lets the move through.
       return guardNudged(
         (tip
           ? `The most recent plan_review approval is not for the current tip commit (${tip}) — ` +

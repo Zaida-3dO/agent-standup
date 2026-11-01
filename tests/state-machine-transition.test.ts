@@ -287,8 +287,8 @@ describeIfDb("the state machine, against Postgres", () => {
     it("a nudging guard lets the write land, and the outcome carries the nudge", async () => {
       // The state-machine half of the nudge rule, and the two halves are
       // deliberately checked in this order: first that the ROW moved — a
-      // warning that silently stopped the write too would be the old
-      // refusal wearing a friendlier name — then that the answer says what
+      // warning that silently stopped the write too would be a refusal
+      // wearing a friendlier name — then that the answer says what
       // the warning was. Rehearsal carries the same advice and still writes
       // nothing.
       const reason = "Finished with one child still actionable.";

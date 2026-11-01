@@ -1575,28 +1575,39 @@ describeIfDb("delete_item", () => {
         taskId: task.id,
       });
 
-      // With the subtask live, finishing the parent is refused — this half
-      // proves the guard is actually running, so the half below is not
+      // With the subtask live, finishing the parent is warned about — the
+      // hierarchy guard nudges, naming the child. A rehearsal reports the
+      // nudge without moving the parent, and this half proves the guard is
+      // actually running and sees the live child, so the half below is not
       // passing merely because nothing was checked.
-      const blocked = await rejectionOf("transition_item", {
-        id: task.id,
-        to: "cancelled",
-        fields: {
-          summary: {
-            // A cancellation asserts that nothing was delivered, so it
-            // carries a decision rather than a list of outcomes — writing
-            // "nothing shipped" into `shipped` would be putting a
-            // non-delivery in the field that means the opposite.
-            shipped: [],
-            decision: "Superseded by the replacement task, so this one is not worth finishing.",
-            not_done: [],
-            user_facing: false,
-            how_verified: "Checked the item tree by hand before cancelling.",
-            watch_for: [],
+      const warned = await call<{ outcome: { nudges?: { guard: string; message: string }[] } }>(
+        "transition_item",
+        {
+          id: task.id,
+          to: "cancelled",
+          dryRun: true,
+          fields: {
+            summary: {
+              // A cancellation asserts that nothing was delivered, so it
+              // carries a decision rather than a list of outcomes — writing
+              // "nothing shipped" into `shipped` would be putting a
+              // non-delivery in the field that means the opposite.
+              shipped: [],
+              decision: "Superseded by the replacement task, so this one is not worth finishing.",
+              not_done: [],
+              user_facing: false,
+              how_verified: "Checked the item tree by hand before cancelling.",
+              watch_for: [],
+            },
           },
         },
-      });
-      expect(blocked.code).toBe("guard_rejected");
+      );
+      expect(warned.outcome.nudges?.map((n) => n.guard)).toContain(
+        "hierarchy.no_finish_with_actionable_child",
+      );
+      expect(warned.outcome.nudges?.map((n) => n.message).join(" ")).toContain(
+        "one of its children was still actionable",
+      );
 
       await call("delete_item", { id: subtask.id, reason: GOOD_REASON });
 

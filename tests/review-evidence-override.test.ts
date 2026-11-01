@@ -214,7 +214,7 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
     });
 
     it("names the repair its diagnosis calls for: re-review when the plan moved, the override when it did not", async () => {
-      // The warning no longer needs to point at an escape route past a wall,
+      // The warning need not point at an escape route past a wall,
       // so each branch of the diagnosis names only the repair that cause
       // calls for — and the override is offered only where nothing actually
       // moved. Spending one on a plan that genuinely moved is the corrupted
@@ -702,7 +702,7 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
     // override still has to work out which tool files it and what its fields
     // are called — and the catalogue note of 2026-09-10 records what that
     // costs: four attempts, four byte-identical refusals, and a justified
-    // merge abandoned. The nudging guards no longer print this sentence, but
+    // merge abandoned. The nudging guards do not print this sentence, but
     // their warnings name these kinds, so the literal call stays pinned —
     // a documented bypass whose shape drifts is an undiscoverable one again.
     it("names the operation that files the override, not only the artifact kind", () => {

@@ -732,11 +732,11 @@ describeIfDb("transition_item and complete_item against Postgres", () => {
       expect(scratch.size()).toBe(0);
       const id = await createTask({ state: "executing" });
       // Sanity: the production runtime (which uses the real guardRegistry,
-      // not `scratch`) still enforces the required-fields guard — proving
-      // guards are actually consulted through the one shared instance
-      // rather than bypassed.
+      // not `scratch`) still enforces the blocked-fields guard's refusal of
+      // a malformed `blocked_on_type` — proving guards are actually
+      // consulted through the one shared instance rather than bypassed.
       const error = await runtime
-        .call("transition_item", { id, to: "blocked" })
+        .call("transition_item", { id, to: "blocked", fields: { blocked_on_type: "weather" } })
         .catch((e: unknown) => e);
       expect(isServiceError(error)).toBe(true);
     });

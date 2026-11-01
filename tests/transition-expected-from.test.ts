@@ -244,12 +244,17 @@ describeIfDb("transition_item expectedFrom precondition", () => {
     it("still rejects on the guards when the precondition is absent — omitting it disables the precondition, not the rest of the write path", async () => {
       const id = await createTask("executing");
 
-      const error = await runtime.call("transition_item", { id, to: "blocked" }).then(
-        () => {
-          throw new Error("expected a guard rejection");
-        },
-        (thrown: unknown) => thrown,
-      );
+      // A malformed `blocked_on_type` is what the blocked guard still
+      // refuses (a missing one only warns), so it is the refusal this case
+      // provokes.
+      const error = await runtime
+        .call("transition_item", { id, to: "blocked", fields: { blocked_on_type: "weather" } })
+        .then(
+          () => {
+            throw new Error("expected a guard rejection");
+          },
+          (thrown: unknown) => thrown,
+        );
 
       if (!isServiceError(error)) throw new Error(`not a ServiceError: ${String(error)}`);
       expect(error.code).toBe("guard_rejected");

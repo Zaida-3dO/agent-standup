@@ -85,12 +85,11 @@ import { pullRequestHasMerged } from "./merge-pull-request";
 
 const MERGE_AUTHORITIES = new Set(["pre_approved", "needs_approval", "agent_judgement", "pr"]);
 
-// The code-review refusals used to end with the `merge_override` remedy
-// sentence, built once for all service-level overrides by
-// `./override-syntax.ts`. A nudge needs no escape hatch from a wall that is
-// no longer there, so the nudged branches below no longer name it; an
-// override recorded beforehand still silences the warning silently, where
-// the satisfier lives.
+// The nudged code-review branches below do not name the `merge_override`
+// remedy sentence that `./override-syntax.ts` builds for the service-level
+// overrides: a warning walls nothing, so it needs no escape hatch. An
+// override recorded beforehand still silences the warning, where the
+// satisfier lives.
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -135,9 +134,9 @@ export const mergeRequiresCommitGuard: Guard = {
     return guardNudged(
       "No commit_sha recorded for this item — the merge was applied without commit " +
         "evidence. Record a `commit` artifact for what shipped so the merged state names " +
-        "it. On the next merge, proof may travel with the call: `merge_proof` (a sentence, " +
-        "or the PR title, naming the change) or `skip_proof: true` when you know there is " +
-        "nothing to prove.",
+        "it. On the next merge, proof may travel with the call: `fields: { merge_proof: ... }` " +
+        "(a sentence, or the PR title, naming the change) or `fields: { skip_proof: true }` " +
+        "when you know there is nothing to prove.",
     );
   },
 };
@@ -417,7 +416,7 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
       return guardNudged(
         `The most recent code_review approval is not for the current review round (${round}) ` +
           `and last recorded commit (${tip ?? "none"}), so the merge was applied on an approval ` +
-          `that no longer qualifies.` +
+          `that does not cover it.` +
           // The ledger-is-behind case, named FIRST because it is the cheapest
           // remedy and the one this refusal used to omit entirely.
           " If the review you are relying on names a commit that is a DESCENDANT of that sha," +

@@ -589,7 +589,7 @@ describe("the operation touches no table on the ordinary path", () => {
     ).rejects.toThrow();
   });
 
-  it("warns about a broad process kill, reading only the configuration", async () => {
+  it("blocks a broad process kill, reading only the configuration", async () => {
     // I12 needs no *item* state by design — it was settled as a prompt to
     // think rather than an ownership check — so no claim, item or artifact
     // is looked up for it, and the handle above would throw if one were.
@@ -597,14 +597,11 @@ describe("the operation touches no table on the ordinary path", () => {
     // It does read the installation's intervention configuration, and that
     // is the point rather than a leak: an entry nobody can switch off is
     // not configurable, and this is the entry most likely to need it — it
-    // fires on the shape of a command alone. One indexed range scan on a
-    // call this entry warns on anyway is the cheapest place in the system
-    // to pay for that, and this case is what pins the distinction between
-    // "reads no state" and "reads no configuration".
-    //
-    // The kill goes through now — the nudge conversion demoted this entry
-    // from `block-overridable` — but the finding, with its full message,
-    // still rides the answer.
+    // blocks on the shape of a command alone, so an installation that finds
+    // it too eager has no other remedy. One indexed range scan on a call
+    // already being refused is the cheapest place in the system to pay for
+    // that, and this case is what pins the distinction between "reads no
+    // state" and "reads no configuration".
     const answer = await callWithSettings(
       {
         eventType: "PreToolUse",
@@ -615,17 +612,16 @@ describe("the operation touches no table on the ordinary path", () => {
       [],
     );
 
-    expect(answer.decision).toBe("allow");
+    expect(answer.decision).toBe("block");
     expect(answer.findings.map((finding) => finding.id)).toContain("broad-process-kill");
   });
 
   it("lets an installation switch a shape-only entry off", async () => {
     // The other half, and the reason the query above is worth its cost: a
     // stored override has to actually reach `evaluate`, or the settings
-    // surface is a display that changes nothing. Both answers are `allow`
-    // since the nudge conversion, so the finding itself is the
-    // discriminator: the override has to silence it, not merely the verdict
-    // the verdict no longer carries anyway.
+    // surface is a display that changes nothing. The finding is the
+    // discriminator alongside the verdict: the override has to silence the
+    // entry, not merely soften what it answers.
     const answer = await callWithSettings(
       {
         eventType: "PreToolUse",
@@ -793,8 +789,8 @@ describe("the intervention registry is consulted, and can refuse a call", () => 
     expect(answer.decision).toBe("allow");
     expect(answer.findings.map((finding) => finding.id)).toContain("merge-without-approval-at-tip");
     // The reason is still the sentence the session reads. A warned call
-    // with a null reason is the old silence with a green light — which is
-    // the thing the hook was built to stop happening.
+    // with a null reason is silence with a green light — which is the thing
+    // the hook was built to stop happening.
     expect(answer.reason).toBeTruthy();
   });
 
@@ -820,7 +816,7 @@ describe("the intervention registry is consulted, and can refuse a call", () => 
     // not about the code being merged. Exactly one of the merge entries
     // speaks, and the split of which half is pinned in
     // `interventions-registry.test.ts` — what this case owns is that the
-    // merge is no longer refused and the warning rides the answer instead.
+    // merge is not refused and the warning rides the answer instead.
     const answer = await callAgainst(
       {
         claim: CLAIM,
@@ -1015,12 +1011,10 @@ describe("what the answer says about the session itself", () => {
     // session that happened to run a guarded command would be told only that
     // the command was refused.
     //
-    // The command changed with the nudge conversion: the broad kill this
-    // case used to drive is a warning now and the call runs. A broad
-    // `git add` on a shared checkout is one of the two entries that still
-    // block, and a session whose first assignment was taken and that
+    // A broad `git add` on a shared checkout is a blocking entry that turns
+    // on a claim, and a session whose first assignment was taken and that
     // claimed again afterwards is a history the server can actually see —
-    // so the block-and-notice combination keeps its pin.
+    // so the block-and-notice combination is pinned on it.
     const answer = await callAgainst(
       {
         ...displacedWorld,

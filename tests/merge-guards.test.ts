@@ -24,11 +24,7 @@ import {
   mergeRequiresVisualReviewGuard,
 } from "@/lib/service/guards";
 import { guardRegistry, type GuardInput } from "@/lib/service/state-machine/guard";
-import {
-  defineOperation,
-  prismaTransactionRunner,
-  ServiceRuntime,
-} from "@/lib/service";
+import { defineOperation, prismaTransactionRunner, ServiceRuntime } from "@/lib/service";
 import { OPERATION_REGISTRY } from "@/lib/service/registry";
 import { defaultSnapshot } from "@/lib/settings";
 import type { ServiceContext, TransactionHandle } from "@/lib/service/context";
@@ -172,8 +168,8 @@ describeIfDb("merge guards (#18), against Postgres", () => {
   /**
    * The pass-plus-nudge pair every converted process-guard test asserts.
    * **The state read is the load-bearing half and happens here, once**: a
-   * merge that carries a warning but does not actually land is the old
-   * refusal wearing a friendlier name, so every test that expects a nudge
+   * merge that carries a warning but does not actually land is a refusal
+   * wearing a friendlier name, so every test that expects a nudge
    * also proves the row reached `merged`. Returns the nudges so each test
    * pins its own branch's message.
    */
@@ -547,8 +543,8 @@ describeIfDb("merge guards (#18), against Postgres", () => {
       expect(nudges[0]?.message).toMatch(
         /not for the current review round \(1\) and last recorded commit \(commit-b\)/,
       );
-      // The remedy the old refusal used to omit entirely, and the only one
-      // that does not require writing something untrue.
+      // The cheapest remedy, and the only one that does not require writing
+      // something untrue.
       expect(nudges[0]?.message).toMatch(/DESCENDANT/);
       expect(nudges[0]?.message).toMatch(/Record a `commit` artifact at the reviewed commit/);
     });
@@ -1335,9 +1331,9 @@ describeIfDb("merge guards (#18), against Postgres", () => {
         mergeAuthority: "needs_approval",
       });
 
-      // The composition claim the old version could not make: where the
-      // refuse-first design reported exactly one clause and hid the other
-      // three, the nudge gate lists every gap in one answer, in
+      // The composition claim: where a refuse-first design would report
+      // exactly one clause and hide the other three, the nudge gate lists
+      // every gap in one answer, in
       // registration order — a caller fixing one gap learns about the rest
       // in the same call instead of discovering them one round trip at a
       // time. The merge landed on every step below; `mergedWithNudges`
@@ -3119,14 +3115,13 @@ describeIfDb("merge guards (#18), against Postgres", () => {
     });
 
     it("the warning names a route that exists, and offers no override of a wall that is gone", async () => {
-      // The old defect stays pinned: an earlier wording of this message
+      // Two things are pinned. One: an earlier wording of this message
       // named a remedy no surface implemented, and a session burned six
       // attempts chasing it — every route a warning names must be one the
-      // caller can actually take. And the new posture is pinned too: an
-      // override is no longer advertised here as a way PAST the warning
-      // (`guards/merge.ts` keeps the reasoning — a nudge needs no escape
-      // hatch from a wall that is no longer there). It works by being
-      // recorded first, which the reasoned-override case above pins.
+      // caller can actually take. Two: an override is not advertised here
+      // as a way PAST the warning (`guards/merge.ts` keeps the reasoning —
+      // a nudge walls nothing, so it needs no escape hatch). It works by
+      // being recorded first, which the reasoned-override case above pins.
       const id = await createTask({ state: "in_review" });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "ovr8888" });
 

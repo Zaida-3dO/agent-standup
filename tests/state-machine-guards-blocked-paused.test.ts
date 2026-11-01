@@ -504,7 +504,7 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
       expect(applied.nudges[0]?.guard).toBe("state-machine.paused_required_fields");
       // This guard reports one gap at a time (unlike the blocked guard's
       // named-at-once rule), so the warning names the reason and stops
-      // there — the old `fields` list pinned the same boundary.
+      // there.
       expect(applied.nudges[0]?.message).toContain("paused requires pause_reason.");
       expect(applied.nudges[0]?.message).not.toContain("resume_condition");
       const row = await readItem(id);
@@ -655,38 +655,118 @@ describeIfDb("blocked/paused guards, against Postgres", () => {
       expect(row.resumeCondition).toBe("dependency ships");
     });
 
-    it("blocked -> blocked with a missing field warns, and the record holds only what the re-entry carried", async () => {
-      // Re-entry isn't exempt from the guard just because the state didn't
-      // change — an incomplete re-block is still reported. It is no longer
-      // refused, though, and that changes what this case can claim: entry
-      // to `blocked` writes the state's columns from the fields the call
-      // carries, so a bare re-entry lands warned and leaves the item
-      // blocked with no reason recorded — which is exactly why the warning
-      // tells the caller to enter blocked again with the missing fields.
-      // What is pinned here: the guard fires on re-entry, and a warned
-      // re-entry still performs the entry write rather than quietly
-      // keeping the old record.
+    it("blocked -> blocked keeps the stored record: an omitted field is kept, a supplied one wins, and a field already on the record is not nudged again", async () => {
+      // The whole re-entry story in one walk, because the pieces only make
+      // sense together. A bare first entry is nudged and stores nothing —
+      // there is no record yet to keep. A re-entry that records the
+      // missing fields lands clean. From then on a re-entry that leaves a
+      // field out keeps the stored value (a bare `blocked → blocked` is a
+      // no-op, not an erasure), and the guard counts the stored value as
+      // supplied, so a partial re-entry is not nudged about fields that
+      // are already on the record. A supplied value still wins.
+      const reg = blockedPausedRegistry();
+      const id = await createTask({ state: "executing" });
+
+      // Fresh bare entry: nudged, and the record holds nothing.
+      const bare = (await callTransition("apply", id, "blocked", {}, reg)) as {
+        nudges: { guard: string; message: string }[];
+      };
+      expect(bare.nudges).toHaveLength(1);
+      expect(bare.nudges[0]?.guard).toBe("state-machine.blocked_required_fields");
+      expect(bare.nudges[0]?.message).toContain("enter blocked again");
+      let row = await readItem(id);
+      expect(row.state).toBe("blocked");
+      expect(row.blockedReason).toBeNull();
+      expect(row.blockedOnType).toBeNull();
+
+      // A bare re-entry of an empty record is still nudged: nothing stored
+      // can stand in for what is missing.
+      const bareAgain = (await callTransition("apply", id, "blocked", {}, reg)) as {
+        nudges: { guard: string }[];
+      };
+      expect(bareAgain.nudges).toHaveLength(1);
+
+      // The repair the nudge asked for: re-enter with the fields.
+      const repaired = (await callTransition(
+        "apply",
+        id,
+        "blocked",
+        {
+          blocked_reason: "original reason",
+          blocked_on_type: "person",
+          blocked_on_person: "user-a",
+        },
+        reg,
+      )) as { nudges?: unknown[] };
+      expect(repaired.nudges ?? []).toEqual([]);
+      row = await readItem(id);
+      expect(row.blockedReason).toBe("original reason");
+      expect(row.blockedOnType).toBe("person");
+      expect(row.blockedOnPersonId).toBe("user-a");
+
+      // A bare re-entry now keeps everything and warns about nothing.
+      const kept = (await callTransition("apply", id, "blocked", {}, reg)) as {
+        nudges?: unknown[];
+      };
+      expect(kept.nudges ?? []).toEqual([]);
+      row = await readItem(id);
+      expect(row.state).toBe("blocked");
+      expect(row.blockedReason).toBe("original reason");
+      expect(row.blockedOnType).toBe("person");
+      expect(row.blockedOnPersonId).toBe("user-a");
+
+      // A partial re-entry writes only what it carries — and the stored
+      // `person` type still demands its person, satisfied from the record.
+      const partial = (await callTransition(
+        "apply",
+        id,
+        "blocked",
+        { blocked_reason: "a newer reason" },
+        reg,
+      )) as { nudges?: unknown[] };
+      expect(partial.nudges ?? []).toEqual([]);
+      row = await readItem(id);
+      expect(row.blockedReason).toBe("a newer reason");
+      expect(row.blockedOnType).toBe("person");
+      expect(row.blockedOnPersonId).toBe("user-a");
+
+      // Leaving the state is still what clears the record, and a fresh
+      // entry afterwards reads only what the call carries: a reason from
+      // an earlier block does not resurface.
+      await callTransition("apply", id, "executing", {}, reg);
+      const fresh = (await callTransition("apply", id, "blocked", {}, reg)) as {
+        nudges: unknown[];
+      };
+      expect(fresh.nudges).toHaveLength(1);
+      row = await readItem(id);
+      expect(row.blockedReason).toBeNull();
+      expect(row.blockedOnType).toBeNull();
+      expect(row.blockedOnPersonId).toBeNull();
+    });
+
+    it("paused -> paused keeps the stored record and is not nudged for a field already recorded", async () => {
       const reg = blockedPausedRegistry();
       const id = await createTask({ state: "executing" });
       await callTransition(
         "apply",
         id,
-        "blocked",
-        { blocked_reason: "original reason", blocked_on_type: "external_process" },
+        "paused",
+        { pause_reason: "waiting on review bandwidth", resume_condition: "reviewer free" },
         reg,
       );
 
-      const applied = (await callTransition("apply", id, "blocked", {}, reg)) as {
-        nudges: { guard: string; message: string }[];
-      };
-      expect(applied.nudges).toHaveLength(1);
-      expect(applied.nudges[0]?.guard).toBe("state-machine.blocked_required_fields");
-      expect(applied.nudges[0]?.message).toContain("enter blocked again");
-
+      const partial = (await callTransition(
+        "apply",
+        id,
+        "paused",
+        { pause_reason: "waiting on a dependency" },
+        reg,
+      )) as { nudges?: unknown[] };
+      expect(partial.nudges ?? []).toEqual([]);
       const row = await readItem(id);
-      expect(row.state).toBe("blocked");
-      expect(row.blockedReason).toBeNull();
-      expect(row.blockedOnType).toBeNull();
+      expect(row.state).toBe("paused");
+      expect(row.pauseReason).toBe("waiting on a dependency");
+      expect(row.resumeCondition).toBe("reviewer free");
     });
   });
 

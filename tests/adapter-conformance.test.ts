@@ -470,10 +470,9 @@ describeIfDb("adapter conformance — every way in agrees", () => {
     {
       // The guard that fires is `summaries.required_and_valid`: `merged` is
       // a completing state and this call carries no summary at all, which
-      // stays an integrity refusal after the conversion. The merge-evidence
-      // guards this case used to trip are nudges now; had the table kept a
-      // summary-less shape claim, the ledger below would name a guard that
-      // no longer refuses anything.
+      // is an integrity refusal. The merge-evidence guards are nudges; had
+      // the table kept a summary-less shape claim about them, the ledger
+      // below would name a guard that never refuses.
       name: "transition_item refuses a merge with no summary",
       operation: "transition_item",
       input: () => ({ id: seededTaskId, to: "merged" }),

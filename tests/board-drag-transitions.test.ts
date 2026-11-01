@@ -73,18 +73,32 @@ describeIfDb("the moves a drag can make, against the real state machine", () => 
     expect(result.item.state).toBe("executing");
   });
 
-  it("BOTH Waiting states are refused without their fields — which is why Waiting takes no drops", async () => {
+  it("BOTH Waiting states land without their fields but warn about the empty record — which is why Waiting takes no drops", async () => {
     // This is the assertion that justifies `TARGET_STATE.waiting` being
-    // null, and it is the one that changed the design: an earlier draft
-    // chose `paused` on the reasoning that only `blocked` needed a reason.
-    // The guard refused it, because `paused` needs a `pause_reason` AND a
-    // `resume_condition`. With no third state to fall back on, every
-    // possible drop on this column would be refused.
+    // null. A drop carries no information, and both Waiting states want
+    // some: `paused` needs a `pause_reason` AND a `resume_condition`,
+    // `blocked` a `blocked_reason` and a `blocked_on_type`. The move lands
+    // either way, but it lands with a warning and an empty record of why
+    // the work stopped — so every possible drop on this column would put
+    // the item in a state it immediately asks the caller to repair. The
+    // reason is given through the item instead.
     const project = await createItem();
     const task = await createItem({ parentId: project.id });
 
-    await expect(transitionTo(task.id, "paused")).rejects.toThrow(/pause_reason/);
-    await expect(transitionTo(task.id, "blocked")).rejects.toThrow(/blocked_reason/);
+    const paused = (await transitionTo(task.id, "paused")) as {
+      item: { state: string };
+      outcome: { nudges?: { message: string }[] };
+    };
+    expect(paused.item.state).toBe("paused");
+    expect(paused.outcome.nudges?.map((n) => n.message).join(" ")).toMatch(/pause_reason/);
+
+    const blocked = (await transitionTo(task.id, "blocked")) as {
+      item: { state: string };
+      outcome: { nudges?: { message: string }[] };
+    };
+    expect(blocked.item.state).toBe("blocked");
+    expect(blocked.outcome.nudges?.map((n) => n.message).join(" ")).toMatch(/blocked_reason/);
+
     expect(TARGET_STATE.waiting).toBeNull();
   });
 

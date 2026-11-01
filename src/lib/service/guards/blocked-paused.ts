@@ -22,6 +22,13 @@
 // where the transition started, including a re-entry from `blocked` itself
 // (see transition.ts's own comment on why the clearing step is guarded by
 // `to`, not just `from`, for the reason that matters here).
+//
+// On a same-state re-entry (`blocked → blocked`, `paused → paused`) a value
+// the item already stores counts as supplied. The state machine keeps a
+// stored field a re-entry leaves out, so a caller recording one missing
+// field after the fact is not nudged again about the fields that are
+// already on the record — and a bare re-entry of a fully recorded block is
+// a no-op, not a warning. A fresh entry reads only what the call carries.
 import {
   guardNudged,
   guardOk,
@@ -41,6 +48,36 @@ const BLOCKED_ON_TYPES_SET: ReadonlySet<string> = new Set(BLOCKED_ON_TYPES);
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isSupplied(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== "";
+}
+
+/**
+ * The fields this guard reads: what the call carries, and on a same-state
+ * re-entry what the item already stores wherever the call is silent (see
+ * the header). The stored columns are mapped back to the field names the
+ * accepted-key table declares, so the checks below read one shape on both
+ * paths. A supplied value always wins, so a re-entry can correct a stored
+ * one; a stored value never overrides an invalid supplied one, so the
+ * malformed-value refusal still fires on exactly what the caller wrote.
+ */
+function effectiveFields(input: GuardInput): Readonly<Record<string, unknown>> {
+  if (input.from !== input.to) return input.fields;
+  const stored: Record<string, unknown> = {
+    [TRANSITION_FIELD.blocked_reason]: input.item.blockedReason,
+    [TRANSITION_FIELD.blocked_on_type]: input.item.blockedOnType,
+    [TRANSITION_FIELD.blocked_on_person]: input.item.blockedOnPersonId,
+    [TRANSITION_FIELD.unblock_at]: input.item.unblockAt,
+    [TRANSITION_FIELD.pause_reason]: input.item.pauseReason,
+    [TRANSITION_FIELD.resume_condition]: input.item.resumeCondition,
+  };
+  const merged: Record<string, unknown> = { ...input.fields };
+  for (const [key, storedValue] of Object.entries(stored)) {
+    if (!isSupplied(merged[key])) merged[key] = storedValue;
+  }
+  return merged;
 }
 
 /**
@@ -92,8 +129,9 @@ export const blockedRequiredFieldsGuard: Guard = {
     "not one of the three legal values is refused.",
   appliesTo: (_from, to) => to === "blocked",
   check(input: GuardInput) {
-    const onType = input.fields[TRANSITION_FIELD.blocked_on_type];
-    const onTypeSupplied = onType !== undefined && onType !== null && onType !== "";
+    const fields = effectiveFields(input);
+    const onType = fields[TRANSITION_FIELD.blocked_on_type];
+    const onTypeSupplied = isSupplied(onType);
 
     // An invalid *value* is its own refusal — see the doc comment. Named
     // values, not just the field name, matching the convention
@@ -109,17 +147,14 @@ export const blockedRequiredFieldsGuard: Guard = {
     }
 
     const missing: string[] = [];
-    if (!isNonEmptyString(input.fields[TRANSITION_FIELD.blocked_reason])) {
+    if (!isNonEmptyString(fields[TRANSITION_FIELD.blocked_reason])) {
       missing.push(TRANSITION_FIELD.blocked_reason);
     }
     if (!onTypeSupplied) missing.push(TRANSITION_FIELD.blocked_on_type);
-    if (
-      onType === "person" &&
-      !isNonEmptyString(input.fields[TRANSITION_FIELD.blocked_on_person])
-    ) {
+    if (onType === "person" && !isNonEmptyString(fields[TRANSITION_FIELD.blocked_on_person])) {
       missing.push(TRANSITION_FIELD.blocked_on_person);
     }
-    if (onType === "time" && !isPresentValue(input.fields[TRANSITION_FIELD.unblock_at])) {
+    if (onType === "time" && !isPresentValue(fields[TRANSITION_FIELD.unblock_at])) {
       missing.push(TRANSITION_FIELD.unblock_at);
     }
 
@@ -187,13 +222,14 @@ export const pausedRequiredFieldsGuard: Guard = {
     "paused with the field to record it.",
   appliesTo: (_from, to) => to === "paused",
   check(input: GuardInput) {
-    if (!isNonEmptyString(input.fields[TRANSITION_FIELD.pause_reason])) {
+    const fields = effectiveFields(input);
+    if (!isNonEmptyString(fields[TRANSITION_FIELD.pause_reason])) {
       return guardNudged(
         "paused requires pause_reason. The pause was applied without it — enter paused " +
           "again (paused → paused) with pause_reason to record it.",
       );
     }
-    if (!isNonEmptyString(input.fields[TRANSITION_FIELD.resume_condition])) {
+    if (!isNonEmptyString(fields[TRANSITION_FIELD.resume_condition])) {
       return guardNudged(
         "paused requires resume_condition. The pause was applied without it — enter paused " +
           "again (paused → paused) with resume_condition to record it.",

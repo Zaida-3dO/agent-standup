@@ -539,14 +539,15 @@ describe("the example built-ins", () => {
   });
 });
 
-describe("the correctness entries that warn", () => {
-  // I10 and I12 — the two the catalogue once filed under "the ones that
-  // should block", and the reason this mechanism exists rather than a
-  // pattern list. The nudge conversion moved both to warnings: the command
-  // runs either way and the finding is the value. Each is still asserted
-  // both ways round — it fires on the situation and declines on the
-  // near-miss a command matcher could not tell apart — and the level
-  // assertions are what pin the demotion.
+describe("the correctness entries with conditional verdicts", () => {
+  // I10 and I12 — the two the catalogue files under "the ones that should
+  // block", and the reason this mechanism exists rather than a pattern
+  // list. They answer at different levels: I10 warns (the merge runs and
+  // the finding is the value), I12 blocks (a broad kill reaches other
+  // sessions' processes, which a warning after the fact cannot undo). Each
+  // is asserted both ways round — it fires on the situation and declines
+  // on the near-miss a command matcher could not tell apart — and the
+  // level assertions pin which answer each gives.
 
   it("I10 warns about a merge only when no approval has ever existed", async () => {
     const merging = { command: "git merge feature", itemId: "i1" };
@@ -634,20 +635,20 @@ describe("the correctness entries that warn", () => {
     expect(unknown).toEqual([]);
   });
 
-  it("I12 warns about a broad kill and allows a scoped one, needing no state", async () => {
+  it("I12 blocks a broad kill and allows a scoped one, needing no state", async () => {
     // Note the contexts carry nothing but a command. I12 was settled as a
     // prompt to think rather than an ownership check, so it must reach a
-    // verdict with no item, no claim and no registry — and since the nudge
-    // conversion it reaches it without stopping anything either: 448 blocks
-    // and 7 overrides, every one of them a probe, is what settled that.
+    // verdict with no item, no claim and no registry. It stays a block,
+    // overridable with a written reason: the processes a broad kill
+    // reaches belong to other sessions, so the harm is theirs and a
+    // warning to the caller does not reach whoever bears it.
     const broad = await evaluate({
       entries: BUILTIN_INTERVENTIONS,
       phase: "pre",
       context: { command: "taskkill /F /IM node.exe" },
     });
     expect(broad.map((finding) => finding.id)).toContain("broad-process-kill");
-    // The conversion pin: this entry used to answer `block-overridable`.
-    expect(strongestLevel(broad)).toBe("nudge");
+    expect(strongestLevel(broad)).toBe("block-overridable");
 
     const scoped = await evaluate({
       entries: BUILTIN_INTERVENTIONS,

@@ -239,8 +239,8 @@ export async function reviewEvidenceOverrideSatisfies(
 /**
  * The full syntax for filing an override of this kind, with what it costs.
  *
- * The guards this override silences now nudge rather than refuse, so this
- * sentence is no longer printed on an answer. It stays exported and pinned
+ * The guards this override silences nudge rather than refuse, so no answer
+ * prints this sentence. It stays exported and pinned
  * because the override kind and its accepted shape are still real, and the
  * property the whole feature rests on is that a remedy is stated in full. An
  * earlier wording elsewhere in this repository named a remedy — "proceed

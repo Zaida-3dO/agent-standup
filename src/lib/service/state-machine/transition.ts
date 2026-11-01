@@ -357,7 +357,7 @@ export async function applyTransition(
   request: TransitionRequest,
   registry: GuardRegistry = guardRegistry,
 ): Promise<AppliedTransition> {
-  const { from, to, rejection, nudges } = await evaluate(ctx, request, registry);
+  const { item, from, to, rejection, nudges } = await evaluate(ctx, request, registry);
   if (rejection) {
     throw rejection;
   }
@@ -386,25 +386,46 @@ export async function applyTransition(
   // Clearing that value on a genuine exit is the
   // `clearingBlocked`/`clearingPaused` branch's job, evaluated first in each
   // `CASE`, not this one's.
+  //
+  // A same-state re-entry (`blocked → blocked`, `paused → paused`) is the
+  // one entry that may leave a field out and mean "keep what is stored":
+  // the guards nudge rather than refuse a missing field, so a bare re-entry
+  // lands, and writing NULL for every field it did not carry would erase
+  // the record the item already holds. On a re-entry each entry column is
+  // the supplied value where there is one and the stored value where there
+  // is not — read from `item`, the row this same transaction loaded for
+  // the guards. Entering from any other state writes exactly what was
+  // supplied, NULL included: there is no record of this block or pause to
+  // keep. The two conditional fields belong to the type that demands them,
+  // so on a re-entry they are kept only while the type now in force still
+  // calls for them — a re-block that moves from a person to an external
+  // process drops the person.
   const enteringBlocked = to === "blocked";
   const enteringPaused = to === "paused";
+  const reentering = from === to;
+  const keep = <T>(supplied: T | null, stored: T | null): T | null =>
+    supplied ?? (reentering ? stored : null);
+  const fields = request.fields ?? {};
+
   const blockedReason = enteringBlocked
-    ? toNullableString(request.fields?.[TRANSITION_FIELD.blocked_reason])
+    ? keep(toNullableString(fields[TRANSITION_FIELD.blocked_reason]), item.blockedReason)
     : null;
   const blockedOnType = enteringBlocked
-    ? toNullableString(request.fields?.[TRANSITION_FIELD.blocked_on_type])
+    ? keep(toNullableString(fields[TRANSITION_FIELD.blocked_on_type]), item.blockedOnType)
     : null;
-  const blockedOnPersonId = enteringBlocked
-    ? toNullableString(request.fields?.[TRANSITION_FIELD.blocked_on_person])
-    : null;
-  const unblockAt = enteringBlocked
-    ? toNullableDate(request.fields?.[TRANSITION_FIELD.unblock_at])
-    : null;
+  const blockedOnPersonId =
+    enteringBlocked && !(reentering && blockedOnType !== "person")
+      ? keep(toNullableString(fields[TRANSITION_FIELD.blocked_on_person]), item.blockedOnPersonId)
+      : null;
+  const unblockAt =
+    enteringBlocked && !(reentering && blockedOnType !== "time")
+      ? keep(toNullableDate(fields[TRANSITION_FIELD.unblock_at]), toNullableDate(item.unblockAt))
+      : null;
   const pauseReason = enteringPaused
-    ? toNullableString(request.fields?.[TRANSITION_FIELD.pause_reason])
+    ? keep(toNullableString(fields[TRANSITION_FIELD.pause_reason]), item.pauseReason)
     : null;
   const resumeCondition = enteringPaused
-    ? toNullableString(request.fields?.[TRANSITION_FIELD.resume_condition])
+    ? keep(toNullableString(fields[TRANSITION_FIELD.resume_condition]), item.resumeCondition)
     : null;
 
   await ctx.db.$executeRawUnsafe(
@@ -448,9 +469,15 @@ export async function applyTransition(
   return { itemId: request.itemId, from, to, nudges };
 }
 
-/** Coerces a guard-checked `fields` value to a string for a raw `UPDATE`, or `null`. */
+/**
+ * Coerces a guard-checked `fields` value to a string for a raw `UPDATE`, or
+ * `null`. A blank string is `null` too: the guards in
+ * `guards/blocked-paused.ts` read a blank as "not supplied", and the write
+ * has to agree, or a blank on a re-entry would overwrite a stored value the
+ * guard had just counted as present.
+ */
 function toNullableString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
 /**
