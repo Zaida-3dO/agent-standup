@@ -6,9 +6,9 @@
 // store — so every guard in §16 that points at an artifact was unsatisfiable
 // for anything created through the product itself. Three of them
 // (`artifact.plan_approval`, `artifact.evidence_at_tip` and the `merge.*`
-// cluster) refuse a transition until the right artifact exists, and there was
-// no way to make one. An item minted here could not reach `executing`, and
-// could not reach `merged`.
+// cluster) refused a transition until the right artifact existed, and there
+// was no way to make one. An item minted here could not reach `executing`,
+// and could not reach `merged`.
 //
 // **One operation clears all three**, because what the guards actually
 // disagree about is which row they are looking for, not how it got there:
@@ -579,8 +579,9 @@ const RECORD_ARTIFACT_CONTRACT = {
         "`merge.requires_approving_code_review`, `merge.requires_authorisation` — reads " +
         "`commitSha` and nothing else; `ref` is a free-text pointer no gate consults. So a " +
         "review, override or approval that names its commit in `ref` while leaving `commitSha` " +
-        "unset is stored without complaint and then refused later as though it named no commit " +
-        "at all. Put the sha in `commitSha`; use `ref` for the URL or branch alongside it.",
+        "unset is stored without complaint, and every later check that could have credited it " +
+        "instead speaks as though the item named no commit at all. Put the sha in `commitSha`; " +
+        "use `ref` for the URL or branch alongside it.",
     },
     {
       fields: ["body", "artifactKind"],
