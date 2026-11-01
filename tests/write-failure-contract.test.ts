@@ -305,8 +305,17 @@ describe("requestId", () => {
   // early without logging, so that path would look for a record that
   // correctly does not exist.
   test("is present on a refusal too, which is logged at debug", async () => {
+    // `summaries.required_and_valid` stands in for "a real service
+    // refusal": after the nudge conversion it is one of the guards that
+    // still throws `GuardRejectedError` (a required answer whose absence
+    // is an integrity fault), so the id here names a live refusal rather
+    // than a guard that now only warns.
     const call: ServiceCall = async () => {
-      throw new GuardRejectedError("merge.requires_commit", "A merge needs a commit.");
+      throw new GuardRejectedError(
+        "summaries.required_and_valid",
+        "A summary is required to complete this item — closing as wont_do needs a decision saying why the work is not being done.",
+        { fields: ["summary"] },
+      );
     };
 
     const body = structured(await callTool(call, "mcp-http", "transition_item", {}));
@@ -316,8 +325,10 @@ describe("requestId", () => {
     expect(record?.requestId).toBe(body.requestId);
     // A refusal keeps the service's own words: they are what an agent reads
     // to work out how to fix the call.
-    expect(body.message).toBe("A merge needs a commit.");
-    expect(body.guard).toBe("merge.requires_commit");
+    expect(body.message).toBe(
+      "A summary is required to complete this item — closing as wont_do needs a decision saying why the work is not being done.",
+    );
+    expect(body.guard).toBe("summaries.required_and_valid");
   });
 });
 
@@ -331,9 +342,17 @@ describe("the rejection shape", () => {
   // string as one without it — otherwise MCP's answer and the CLI's differ
   // for the same failure, and the cross-adapter assertion breaks.
   test("reduces identically with and without the diagnosis", () => {
-    const error = new GuardRejectedError("merge.requires_commit", "A merge needs a commit.", {
-      fields: ["state", "commitSha"],
-    });
+    // A summaries shape refusal — several offending fields, supplied out of
+    // alphabetical order — from a guard that still refuses after the nudge
+    // conversion. `fields` on a real summaries rejection is the deduped set
+    // of the issues' fields, so a multi-field case is what that guard
+    // actually produces; the supplied order below is deliberately unsorted
+    // so the pin also shows the sort.
+    const error = new GuardRejectedError(
+      "summaries.required_and_valid",
+      "shipped has an empty entry. how_verified is required when user_facing is false.",
+      { fields: ["shipped", "how_verified"] },
+    );
 
     const bare = structured(toolRejection(error));
     const diagnosed = structured(
@@ -354,7 +373,7 @@ describe("the rejection shape", () => {
       });
 
     expect(reduce(diagnosed)).toBe(reduce(bare));
-    expect(reduce(bare)).toBe("guard_rejected[commitSha,state]merge.requires_commit");
+    expect(reduce(bare)).toBe("guard_rejected[how_verified,shipped]summaries.required_and_valid");
   });
 
   // A call site that supplies no diagnosis renders exactly what it always
