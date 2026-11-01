@@ -539,24 +539,29 @@ describe("the example built-ins", () => {
   });
 });
 
-describe("the correctness entries that block", () => {
-  // I10 and I12 — the two the catalogue files under "the ones that should
-  // block", and the reason this mechanism exists rather than a pattern
-  // list. Each is asserted both ways round: it fires on the situation, and
-  // it declines on the near-miss a command matcher could not tell apart.
+describe("the correctness entries that warn", () => {
+  // I10 and I12 — the two the catalogue once filed under "the ones that
+  // should block", and the reason this mechanism exists rather than a
+  // pattern list. The nudge conversion moved both to warnings: the command
+  // runs either way and the finding is the value. Each is still asserted
+  // both ways round — it fires on the situation and declines on the
+  // near-miss a command matcher could not tell apart — and the level
+  // assertions are what pin the demotion.
 
-  it("I10 blocks a merge only when no approval has ever existed", async () => {
+  it("I10 warns about a merge only when no approval has ever existed", async () => {
     const merging = { command: "git merge feature", itemId: "i1" };
 
-    // Never approved at all — the situation the block is for, and the one
-    // with a confirmed true positive behind it.
+    // Never approved at all — the situation the warning is for, and the
+    // one with a confirmed true positive behind it.
     const unapproved = await evaluate({
       entries: BUILTIN_INTERVENTIONS,
       phase: "pre",
       context: { ...merging, hasApprovalAtTip: false, hasAnyApproval: false },
     });
     expect(unapproved.map((finding) => finding.id)).toContain("merge-without-approval-at-tip");
-    expect(strongestLevel(unapproved)).toBe("block-overridable");
+    // The conversion pin: this entry used to answer `block-overridable`;
+    // raising it back fails here.
+    expect(strongestLevel(unapproved)).toBe("nudge");
 
     // Approved at tip — the same command, refused or allowed on state
     // alone, which is the whole thesis.
@@ -567,8 +572,8 @@ describe("the correctness entries that block", () => {
     });
     expect(approved).toEqual([]);
 
-    // Unknown. Absent is not `false`: blocking a merge on a question the
-    // server could not answer is how a guard becomes an obstacle.
+    // Unknown. Absent is not `false`: firing on a question the server
+    // could not answer is how a nudge becomes noise.
     const unknown = await evaluate({
       entries: BUILTIN_INTERVENTIONS,
       phase: "pre",
@@ -577,8 +582,8 @@ describe("the correctness entries that block", () => {
     expect(unknown).toEqual([]);
 
     // **The narrowing, asserted as its own case.** `hasApprovalAtTip:
-    // false` alone must not be enough to block, because that is the
-    // reading that refuses a merge of work which has in fact been
+    // false` alone must not be enough to fire, because that is the
+    // reading that warns on a merge of work which has in fact been
     // reviewed — fourteen of them, against one true catch. Deleting the
     // `hasAnyApproval` clause in the predicate makes this line fail.
     const staleOnly = await evaluate({
@@ -592,16 +597,19 @@ describe("the correctness entries that block", () => {
   it("I10b nudges a stale approval, and never fires alongside I10", async () => {
     const merging = { command: "git merge feature", itemId: "i1" };
 
-    // Approved before, not at the tip now. A nudge, not a refusal — the
-    // dominant cause is a round demotion with no code change behind it.
+    // Approved before, not at the tip now. A nudge, never a refusal —
+    // since the conversion its stricter half-sibling I10 nudges too, and
+    // the dominant cause here is a round demotion with no code change
+    // behind it.
     const stale = await evaluate({
       entries: BUILTIN_INTERVENTIONS,
       phase: "pre",
       context: { ...merging, hasApprovalAtTip: false, hasAnyApproval: true },
     });
     expect(stale.map((finding) => finding.id)).toContain("merge-with-stale-approval");
-    // The whole point of the split: this half must not block. Changing
-    // `defaultLevel` to `block-overridable` fails here.
+    // Pinned in both directions of the split: this half never escalates,
+    // and with I10 nudging too, the split's content is now wholly in which
+    // message speaks — changing this entry's `defaultLevel` fails here.
     expect(strongestLevel(stale)).toBe("nudge");
 
     // **Mutual exclusivity**, which is what makes the split a split rather
@@ -626,17 +634,20 @@ describe("the correctness entries that block", () => {
     expect(unknown).toEqual([]);
   });
 
-  it("I12 blocks a broad kill and allows a scoped one, needing no state", async () => {
+  it("I12 warns about a broad kill and allows a scoped one, needing no state", async () => {
     // Note the contexts carry nothing but a command. I12 was settled as a
     // prompt to think rather than an ownership check, so it must reach a
-    // verdict with no item, no claim and no registry.
+    // verdict with no item, no claim and no registry — and since the nudge
+    // conversion it reaches it without stopping anything either: 448 blocks
+    // and 7 overrides, every one of them a probe, is what settled that.
     const broad = await evaluate({
       entries: BUILTIN_INTERVENTIONS,
       phase: "pre",
       context: { command: "taskkill /F /IM node.exe" },
     });
     expect(broad.map((finding) => finding.id)).toContain("broad-process-kill");
-    expect(strongestLevel(broad)).toBe("block-overridable");
+    // The conversion pin: this entry used to answer `block-overridable`.
+    expect(strongestLevel(broad)).toBe("nudge");
 
     const scoped = await evaluate({
       entries: BUILTIN_INTERVENTIONS,
@@ -1025,9 +1036,11 @@ describe("the catalogue entries that are deliberately not built", () => {
       I10: "merge-without-approval-at-tip",
       // Split out of I10 rather than catalogued separately from the start.
       // The two halves answer opposite questions about the same merge —
-      // never reviewed (block) against reviewed and demoted (nudge) — and
-      // lived in one entry until the firing record showed the second half
-      // was refusing fourteen merges for every one it caught.
+      // never reviewed against reviewed-then-demoted — and lived in one
+      // entry until the firing record showed the second half refusing
+      // fourteen merges for every one it caught. The nudge conversion has
+      // since demoted the whole lineage to warnings; what stays split is
+      // the diagnosis, not the level.
       I10b: "merge-with-stale-approval",
       I11: "broad-git-add-on-shared-checkout",
       I12: "broad-process-kill",
