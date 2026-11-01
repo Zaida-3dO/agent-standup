@@ -195,12 +195,24 @@ describeIfDb("MCP write tools against Postgres", () => {
     });
 
     it("a refused preview reports allowed:false, with the guard identifier, and still writes nothing", async () => {
+      // The move this rehearses had to change with the nudge conversion:
+      // entering `blocked` with the reason and type merely MISSING is a
+      // nudge now (the item can supply them later), so it would preview as
+      // allowed. A SUPPLIED `blocked_on_type` outside the legal values is
+      // what that guard still refuses — a value already wrong cannot be
+      // completed by a later call — and a rehearsal of a refusal is the
+      // case this test is about.
       const id = await createTaskViaMcp();
       const beforeEvents = await eventCount(id);
 
       const result = await client.callTool({
         name: "transition_item",
-        arguments: { id, to: "blocked", dryRun: true },
+        arguments: {
+          id,
+          to: "blocked",
+          dryRun: true,
+          fields: { blocked_reason: "waiting on the design team", blocked_on_type: "design-team" },
+        },
       });
 
       // The load-bearing assertion: a *rejected* rehearsal is still not an
