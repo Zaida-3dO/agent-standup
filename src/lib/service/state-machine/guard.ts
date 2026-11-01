@@ -118,10 +118,9 @@ export function guardNudged(message: string): GuardResult {
 }
 
 /** Whether an OK verdict is a nudged one (the move proceeds either way). */
-export function isNudgedResult(result: GuardResult): result is Extract<
-  GuardResult,
-  { ok: true }
-> & { readonly nudge: { readonly message: string } } {
+export function isNudgedResult(
+  result: GuardResult,
+): result is Extract<GuardResult, { ok: true }> & { readonly nudge: { readonly message: string } } {
   return result.ok === true && "nudge" in result;
 }
 

@@ -79,10 +79,7 @@ interface ChildRow {
  * level, on every call, and never queries "any descendant" as a single
  * recursive shape.
  */
-async function actionableChildren(
-  db: GuardInput["db"],
-  itemId: string,
-): Promise<ChildRow[]> {
+async function actionableChildren(db: GuardInput["db"], itemId: string): Promise<ChildRow[]> {
   // Archived children are not asked about (MILESTONES.md #137). An archived
   // row is one the installation has said should never have existed, and it
   // will never be transitioned again because no ordinary read can reach it
