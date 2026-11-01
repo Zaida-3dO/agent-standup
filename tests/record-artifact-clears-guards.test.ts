@@ -4,7 +4,10 @@
 // row says: "#17's three guards refuse every item minted through the product
 // … One operation clears all three." Everything else in #98 is machinery for
 // that sentence, and it is the sentence a reviewer should be able to check
-// without reading the machinery.
+// without reading the machinery. The nudge conversion has since changed the
+// first clause's tense — the guards warn now and the move lands — but
+// "one operation clears all three" is still exactly what this file proves:
+// record the evidence and the warnings go quiet, one guard at a time.
 //
 // **Why this is not covered by testing each guard separately.** A per-guard
 // test seeds the artifact it needs with `prisma.artifact.create` and asks
@@ -18,9 +21,12 @@
 // through the real guard registry. If the operation wrote the right rows in a
 // shape the guards do not accept, this is the file that goes red.
 //
-// The negative half is asserted first in each block, deliberately. A guard
-// that has only been seen to *allow* something has not been shown to be doing
-// anything at all — the same reason CLAUDE.md gives for testing rejections.
+// The warning half is asserted first in each block, deliberately, on a
+// `dry_run` probe: an item that has not recorded the evidence still lands,
+// but the guard must speak up for it. A guard only ever seen *silent* has
+// not been shown to be doing anything at all — the same posture CLAUDE.md
+// takes on testing refusals. The probe keeps the item where it is, so each
+// block below can show one warning going quiet at a time.
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, guardRegistry, prismaTransactionRunner } from "@/lib/service";
@@ -36,9 +42,10 @@ import {
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
-interface ServiceError {
-  code: string;
-  guard?: string;
+interface ProbeOutcome {
+  allowed: boolean;
+  nudges?: { guard: string; message: string }[];
+  rejection?: { guard: string };
 }
 
 describeIfDb("record_artifact clears the guards that had no writer (#98)", () => {
@@ -94,13 +101,31 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     return id;
   }
 
-  async function transitionFails(id: string, to: string): Promise<ServiceError> {
-    return (await runtime
-      .call("transition_item", { id, to })
-      .then(() => {
-        throw new Error(`expected the move to ${to} to be refused, but it was allowed`);
-      })
-      .catch((error: unknown) => error)) as ServiceError;
+  /**
+   * A `dry_run` probe: what a move to `to` would answer, with the item
+   * staying put. `fields` carries what a real call would carry — including
+   * the summary a completing state needs, so a probe reports the evidence
+   * warnings this file is about rather than the summary guard's refusal.
+   */
+  async function probe(id: string, to: string, fields: Record<string, unknown> = {}) {
+    const result = (await runtime.call("transition_item", { id, to, dryRun: true, fields })) as {
+      outcome: ProbeOutcome;
+    };
+    return result.outcome;
+  }
+
+  /** Probes in this file are all moves that land; returns the warning guard ids. */
+  function warnedGuards(outcome: ProbeOutcome): string[] {
+    expect(outcome.allowed).toBe(true);
+    return (outcome.nudges ?? []).map((n) => n.guard);
+  }
+
+  /** A real move; warnings ride on `outcome.nudges`, omitted when silent. */
+  async function moved(id: string, to: string) {
+    return (await runtime.call("transition_item", { id, to })) as {
+      item: { state: string };
+      outcome: { nudges?: unknown[] };
+    };
   }
 
   /**
@@ -109,10 +134,12 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
    * `merged` is a completing state, so it is reached through `complete_item`
    * and carries a summary — the summary guard is a separate requirement from
    * the artifact evidence this file is about, and it applies whether or not
-   * the artifacts are in place. Supplying a valid one keeps the rejections
-   * below attributable to the guard each assertion names: without it every
-   * merge attempt would fail on `summaries.required_and_valid` first, and
-   * this file would prove nothing about artifacts at all.
+   * the artifacts are in place. Supplying a valid one (the same candidate
+   * rides the merge probes' `fields.summary`) keeps the probes and the
+   * completion below reporting the artifact warnings each assertion names:
+   * without it every merge probe would answer the
+   * `summaries.required_and_valid` refusal instead, and this file would
+   * prove nothing about artifacts at all.
    */
   function validSummary() {
     return {
@@ -124,38 +151,28 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
     };
   }
 
-  async function mergeFails(id: string): Promise<ServiceError> {
-    return (await runtime
-      .call("complete_item", { id, to: "merged", summary: validSummary() })
-      .then(() => {
-        throw new Error("expected the merge to be refused, but it was allowed");
-      })
-      .catch((error: unknown) => error)) as ServiceError;
-  }
-
   it("clears artifact.review_requested — entering in_review", async () => {
     const id = await freshItem("executing");
 
-    const refused = await transitionFails(id, "in_review");
-    expect(refused.code).toBe("guard_rejected");
-    expect(refused.guard).toBe("artifact.review_requested");
+    expect(warnedGuards(await probe(id, "in_review"))).toEqual(["artifact.review_requested"]);
 
     await runtime.call("request_review", { itemId: id, actorType: "agent", actorId: "agent-b" });
 
-    const result = (await runtime.call("transition_item", { id, to: "in_review" })) as {
-      item: { state: string };
-    };
+    // The event the operation wrote is what the guard reads — the probe
+    // goes silent, and the real move lands with nothing to say.
+    expect(warnedGuards(await probe(id, "in_review"))).toEqual([]);
+
+    const result = await moved(id, "in_review");
     expect(result.item.state).toBe("in_review");
+    expect(result.outcome.nudges).toBeUndefined();
   });
 
   it("clears artifact.plan_approval and artifact.evidence_at_tip — plan_review to executing", async () => {
     const id = await freshItem("plan_review");
 
-    const refused = await transitionFails(id, "executing");
-    expect(refused.code).toBe("guard_rejected");
-    expect(refused.guard).toBe("artifact.plan_approval");
+    expect(warnedGuards(await probe(id, "executing"))).toEqual(["artifact.plan_approval"]);
 
-    // A plan_review artifact that does NOT approve leaves the guard refusing
+    // A plan_review artifact that does NOT approve leaves the guard warning
     // — otherwise this test would pass on an operation that wrote any row at
     // all, which is the failure mode a happy-path-only suite has.
     await runtime.call("record_artifact", {
@@ -165,8 +182,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdByType: "person",
       createdById: "user-a",
     });
-    const stillRefused = await transitionFails(id, "executing");
-    expect(stillRefused.guard).toBe("artifact.plan_approval");
+    expect(warnedGuards(await probe(id, "executing"))).toEqual(["artifact.plan_approval"]);
 
     await runtime.call("record_artifact", {
       itemId: id,
@@ -175,20 +191,22 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdByType: "person",
       createdById: "user-a",
     });
+    // With an approval on the record and no commit to be current against,
+    // `artifact.evidence_at_tip` has nothing to add either.
+    expect(warnedGuards(await probe(id, "executing"))).toEqual([]);
 
-    const result = (await runtime.call("transition_item", { id, to: "executing" })) as {
-      item: { state: string };
-    };
+    const result = await moved(id, "executing");
     expect(result.item.state).toBe("executing");
+    expect(result.outcome.nudges).toBeUndefined();
   });
 
-  it("refuses plan approval that is stale against a commit recorded since", async () => {
+  it("clears a stale plan approval against a recorded commit — by naming the tip", async () => {
     const id = await freshItem("plan_review");
 
     // Approved with no commitSha, while a commit artifact exists: the tip is
     // a real sha, the approval names none, so it cannot be shown to be
-    // current. This is `artifact.evidence_at_tip`'s job and it is a distinct
-    // rejection from "never approved".
+    // current. This is `artifact.evidence_at_tip`'s warning to make, and it
+    // is a distinct cause from "never approved".
     await runtime.call("record_artifact", {
       itemId: id,
       artifactKind: "commit",
@@ -204,8 +222,9 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdById: "user-a",
     });
 
-    const refused = await transitionFails(id, "executing");
-    expect(refused.guard).toBe("artifact.evidence_at_tip");
+    const stale = await probe(id, "executing");
+    expect(warnedGuards(stale)).toEqual(["artifact.evidence_at_tip"]);
+    expect(stale.nudges?.[0]?.message).toContain("not for the current tip commit");
 
     // Naming the tip clears it — so the operation can express "this approval
     // is for this commit", which is the whole content of the tip check.
@@ -217,18 +236,27 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdByType: "person",
       createdById: "user-a",
     });
+    expect(warnedGuards(await probe(id, "executing"))).toEqual([]);
 
-    const result = (await runtime.call("transition_item", { id, to: "executing" })) as {
-      item: { state: string };
-    };
+    const result = await moved(id, "executing");
     expect(result.item.state).toBe("executing");
+    expect(result.outcome.nudges).toBeUndefined();
   });
 
   it("clears the merge cluster — commit plus an approving code review at round and tip", async () => {
     const id = await freshItem("in_review");
+    const mergeProbe = () => probe(id, "merged", { summary: validSummary() });
 
-    const noCommit = await mergeFails(id);
-    expect(noCommit.guard).toBe("merge.requires_commit");
+    // With nothing on the record, every merge guard whose evidence is
+    // missing warns on the SAME probe — each names its own cause, none of
+    // them swallows the others.
+    expect(warnedGuards(await mergeProbe()).sort()).toEqual(
+      [
+        "merge.requires_approving_code_review",
+        "merge.requires_authorisation",
+        "merge.requires_commit",
+      ].sort(),
+    );
 
     await runtime.call("record_artifact", {
       itemId: id,
@@ -238,13 +266,15 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdById: "agent-a",
     });
 
-    const noReview = await mergeFails(id);
-    expect(noReview.guard).toBe("merge.requires_approving_code_review");
+    expect(warnedGuards(await mergeProbe()).sort()).toEqual(
+      ["merge.requires_approving_code_review", "merge.requires_authorisation"].sort(),
+    );
 
     // An AGENT's approval satisfies the code-review clause but not the
     // authorisation clause, because this item's merge_authority is
-    // needs_approval. Two distinct guards, and the item is still refused —
-    // the case that would slip through if `createdByType` were defaulted.
+    // needs_approval. Two distinct guards: the review warning goes quiet
+    // while the authorisation one keeps sounding — the case that would slip
+    // through if `createdByType` were defaulted.
     await runtime.call("record_artifact", {
       itemId: id,
       artifactKind: "code_review",
@@ -253,8 +283,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdByType: "agent",
       createdById: "agent-a",
     });
-    const agentOnly = await mergeFails(id);
-    expect(agentOnly.guard).toBe("merge.requires_authorisation");
+    expect(warnedGuards(await mergeProbe())).toEqual(["merge.requires_authorisation"]);
 
     // Recording the review a second time as a person does NOT clear it: a
     // review states the code is sound, not that a human decided it may land,
@@ -267,8 +296,7 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdByType: "person",
       createdById: "user-a",
     });
-    const stillHeld = await mergeFails(id);
-    expect(stillHeld.guard).toBe("merge.requires_authorisation");
+    expect(warnedGuards(await mergeProbe())).toEqual(["merge.requires_authorisation"]);
 
     // The person's recorded DECISION is what clears it (SCHEMA.md §6e).
     await runtime.call("record_artifact", {
@@ -283,11 +311,12 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       id,
       to: "merged",
       summary: validSummary(),
-    })) as { item: { state: string } };
+    })) as { item: { state: string }; nudges?: unknown[] };
     expect(result.item.state).toBe("merged");
+    expect(result.nudges).toBeUndefined(); // fully evidenced: the completion is silent
   });
 
-  it("refuses a merge whose approval is for a superseded commit", async () => {
+  it("warns for a merge whose approval is for a superseded commit", async () => {
     const id = await freshItem("in_review");
 
     await runtime.call("record_artifact", {
@@ -314,8 +343,22 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdById: "agent-a",
     });
 
-    const refused = await mergeFails(id);
-    expect(refused.guard).toBe("merge.requires_approving_code_review");
+    // The review warning rides alongside the authorisation one — this item
+    // is still needs_approval with no recorded decision — neither cause
+    // silences the other.
+    expect(warnedGuards(await probe(id, "merged", { summary: validSummary() })).sort()).toEqual(
+      ["merge.requires_approving_code_review", "merge.requires_authorisation"].sort(),
+    );
+
+    const result = (await runtime.call("complete_item", {
+      id,
+      to: "merged",
+      summary: validSummary(),
+    })) as { item: { state: string }; nudges?: { guard: string }[] };
+    expect(result.item.state).toBe("merged"); // the merge lands; the warnings ride along
+    expect((result.nudges ?? []).map((n) => n.guard).sort()).toEqual(
+      ["merge.requires_approving_code_review", "merge.requires_authorisation"].sort(),
+    );
   });
 
   it("walks a fresh item from plan_review to merged using only service calls", async () => {
@@ -331,7 +374,10 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdByType: "person",
       createdById: "user-a",
     });
-    await runtime.call("transition_item", { id, to: "executing" });
+    const toExecuting = (await runtime.call("transition_item", { id, to: "executing" })) as {
+      outcome: { nudges?: unknown[] };
+    };
+    expect(toExecuting.outcome.nudges).toBeUndefined();
 
     await runtime.call("record_artifact", {
       itemId: id,
@@ -341,7 +387,10 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       createdById: "agent-a",
     });
     await runtime.call("request_review", { itemId: id, actorType: "agent", actorId: "agent-b" });
-    await runtime.call("transition_item", { id, to: "in_review" });
+    const toReview = (await runtime.call("transition_item", { id, to: "in_review" })) as {
+      outcome: { nudges?: unknown[] };
+    };
+    expect(toReview.outcome.nudges).toBeUndefined();
 
     await runtime.call("record_artifact", {
       itemId: id,
@@ -355,8 +404,12 @@ describeIfDb("record_artifact clears the guards that had no writer (#98)", () =>
       id,
       to: "merged",
       summary: validSummary(),
-    })) as { item: { state: string } };
+    })) as { item: { state: string }; nudges?: unknown[] };
 
     expect(merged.item.state).toBe("merged");
+    // The walk's real done-when: every move landed, and none of them needed
+    // a warning to say so — an agent can work an item to merged on evidence
+    // alone.
+    expect(merged.nudges).toBeUndefined();
   });
 });
