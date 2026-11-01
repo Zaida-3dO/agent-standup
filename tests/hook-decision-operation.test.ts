@@ -589,7 +589,7 @@ describe("the operation touches no table on the ordinary path", () => {
     ).rejects.toThrow();
   });
 
-  it("blocks a broad process kill, reading only the configuration", async () => {
+  it("warns about a broad process kill, reading only the configuration", async () => {
     // I12 needs no *item* state by design — it was settled as a prompt to
     // think rather than an ownership check — so no claim, item or artifact
     // is looked up for it, and the handle above would throw if one were.
@@ -597,11 +597,14 @@ describe("the operation touches no table on the ordinary path", () => {
     // It does read the installation's intervention configuration, and that
     // is the point rather than a leak: an entry nobody can switch off is
     // not configurable, and this is the entry most likely to need it — it
-    // blocks on the shape of a command alone, so an installation that finds
-    // it too eager has no other remedy. One indexed range scan on a call
-    // already being refused is the cheapest place in the system to pay for
-    // that, and this case is what pins the distinction between "reads no
-    // state" and "reads no configuration".
+    // fires on the shape of a command alone. One indexed range scan on a
+    // call this entry warns on anyway is the cheapest place in the system
+    // to pay for that, and this case is what pins the distinction between
+    // "reads no state" and "reads no configuration".
+    //
+    // The kill goes through now — the nudge conversion demoted this entry
+    // from `block-overridable` — but the finding, with its full message,
+    // still rides the answer.
     const answer = await callWithSettings(
       {
         eventType: "PreToolUse",
@@ -612,13 +615,17 @@ describe("the operation touches no table on the ordinary path", () => {
       [],
     );
 
-    expect(answer.decision).toBe("block");
+    expect(answer.decision).toBe("allow");
+    expect(answer.findings.map((finding) => finding.id)).toContain("broad-process-kill");
   });
 
   it("lets an installation switch a shape-only entry off", async () => {
     // The other half, and the reason the query above is worth its cost: a
     // stored override has to actually reach `evaluate`, or the settings
-    // surface is a display that changes nothing.
+    // surface is a display that changes nothing. Both answers are `allow`
+    // since the nudge conversion, so the finding itself is the
+    // discriminator: the override has to silence it, not merely the verdict
+    // the verdict no longer carries anyway.
     const answer = await callWithSettings(
       {
         eventType: "PreToolUse",
@@ -773,17 +780,21 @@ describe("the intervention registry is consulted, and can refuse a call", () => 
     defaultBranch: "main",
   };
 
-  it("blocks a merge when no approval stands at the item's tip", async () => {
+  it("warns loudly about a merge with no approval at the tip, and lets it through", async () => {
     const answer = await callAgainst(
       { claim: CLAIM, commits: [{ commitSha: "aaa" }], approvals: [] },
       { eventType: "PreToolUse", sessionId: "s1", tool: "Bash", command: "git merge feature" },
     );
 
-    expect(answer.decision).toBe("block");
+    // The conversion's shape: the merge is not refused, and the warning
+    // travels. This entry was `block-overridable`; it is a nudge now, and
+    // the detection narrowing that keeps its message true is asserted in
+    // `interventions-registry.test.ts`.
+    expect(answer.decision).toBe("allow");
     expect(answer.findings.map((finding) => finding.id)).toContain("merge-without-approval-at-tip");
-    // The reason is the sentence the session reads. A block with a null
-    // reason is a refusal with no stated cause, which is the thing the hook
-    // was built to stop happening.
+    // The reason is still the sentence the session reads. A warned call
+    // with a null reason is the old silence with a green light — which is
+    // the thing the hook was built to stop happening.
     expect(answer.reason).toBeTruthy();
   });
 
@@ -804,9 +815,12 @@ describe("the intervention registry is consulted, and can refuse a call", () => 
     expect(answer.findings).toEqual([]);
   });
 
-  it("blocks when the approval names an earlier commit than the tip", async () => {
+  it("warns on an approval for an earlier commit than the tip", async () => {
     // Reviewed, then changed. The approval exists and is real; it is just
-    // not about the code being merged.
+    // not about the code being merged. Exactly one of the merge entries
+    // speaks, and the split of which half is pinned in
+    // `interventions-registry.test.ts` — what this case owns is that the
+    // merge is no longer refused and the warning rides the answer instead.
     const answer = await callAgainst(
       {
         claim: CLAIM,
@@ -816,12 +830,17 @@ describe("the intervention registry is consulted, and can refuse a call", () => 
       { eventType: "PreToolUse", sessionId: "s1", tool: "Bash", command: "git merge feature" },
     );
 
-    expect(answer.decision).toBe("block");
+    expect(answer.decision).toBe("allow");
+    expect(answer.findings.map((finding) => finding.id)).toEqual([
+      expect.stringMatching(/^merge-with/),
+    ]);
+    expect(answer.reason).toBeTruthy();
   });
 
-  it("blocks a `gh pr merge`, which is how work actually lands", async () => {
+  it("warns about a `gh pr merge`, which is how work actually lands", async () => {
     // A check that only read `git merge` would be watching the door nobody
-    // uses in this repository.
+    // uses in this repository. The detection half is unchanged by the
+    // nudge conversion; only the verdict is.
     const answer = await callAgainst(
       { claim: CLAIM, commits: [{ commitSha: "aaa" }], approvals: [] },
       {
@@ -832,7 +851,8 @@ describe("the intervention registry is consulted, and can refuse a call", () => 
       },
     );
 
-    expect(answer.decision).toBe("block");
+    expect(answer.decision).toBe("allow");
+    expect(answer.findings.map((finding) => finding.id)).toContain("merge-without-approval-at-tip");
   });
 
   it("allows a merge by a session holding no claim at all", async () => {
@@ -875,8 +895,10 @@ describe("the intervention registry is consulted, and can refuse a call", () => 
 
   it("never blocks a post event, however strong the finding would be", async () => {
     // The server's half of the invariant, asserted through the whole
-    // operation rather than through the registry alone: the same world that
-    // produces a block on `pre` must produce an allow on `post`.
+    // operation rather than through the registry alone: the phase is what
+    // decides, so findings that would be clamped anyway are clamped by
+    // phase first — and `canBlock: false` on the answer is what the hook
+    // side reads to know a refusal would have been meaningless.
     const answer = await callAgainst(
       { claim: CLAIM, commits: [{ commitSha: "aaa" }], approvals: [] },
       {
@@ -926,14 +948,16 @@ describe("what rides back with the answer", () => {
     );
     expect(nudged.findings.every((finding) => finding.timing === "digest")).toBe(true);
 
+    // Re-anchored with the conversion: a no-approval merge warns now, so
+    // the only entries still reaching `block` are the shape-only ones — a
+    // broad add on a shared checkout is one, and `resolveTiming`'s clamp
+    // ("blocking is always immediate") has to keep paying on the one
+    // surface that can still produce a block.
     const blocked = await callAgainst(
-      {
-        claim: { itemId: "item-1", worktree: null, state: "executing", defaultBranch: "main" },
-        commits: [{ commitSha: "aaa" }],
-        approvals: [],
-      },
-      { eventType: "PreToolUse", sessionId: "s1", tool: "Bash", command: "git merge feature" },
+      { claim: { itemId: "item-1", worktree: "", state: "executing", defaultBranch: "main" } },
+      { eventType: "PreToolUse", sessionId: "s1", tool: "Bash", command: "git add -A" },
     );
+    expect(blocked.decision).toBe("block");
     expect(blocked.findings.some((finding) => finding.timing === "immediate")).toBe(true);
   });
 });
@@ -990,13 +1014,23 @@ describe("what the answer says about the session itself", () => {
     // about the session. A block must not swallow the notice, or a displaced
     // session that happened to run a guarded command would be told only that
     // the command was refused.
+    //
+    // The command changed with the nudge conversion: the broad kill this
+    // case used to drive is a warning now and the call runs. A broad
+    // `git add` on a shared checkout is one of the two entries that still
+    // block, and a session whose first assignment was taken and that
+    // claimed again afterwards is a history the server can actually see —
+    // so the block-and-notice combination keeps its pin.
     const answer = await callAgainst(
-      { ...displacedWorld, claim: undefined },
+      {
+        ...displacedWorld,
+        claim: { itemId: "item-1", worktree: "", state: "executing", defaultBranch: "main" },
+      },
       {
         eventType: "PreToolUse",
         sessionId: "session-displaced",
         tool: "Bash",
-        command: "pkill -f node",
+        command: "git add -A",
       },
     );
 
