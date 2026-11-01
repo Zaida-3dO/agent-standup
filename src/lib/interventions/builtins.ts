@@ -183,13 +183,17 @@ const reviewWithoutApprovalAtTip: Intervention = {
  *      `false` to a question with no subject.
  *
  * Only the third case — an item with a real tip and no approval standing at
- * it — is the situation this exists for, and it is the one where blocking
- * costs a session thirty seconds and saves an unreviewed merge.
+ * it — is the situation this exists for.
  *
- * **`block-overridable`, not `hard-block`**, per the catalogue: the value
- * is the recorded reason on a reviewable event, not the friction. A merge
- * that genuinely should proceed without an approval at tip — resolving a
- * conflict, landing a revert — proceeds, and says why.
+ * **`nudge`, not a block.** The owner's rule for this tracker is that the
+ * board recommends rather than blocks (see the guard framework's own header,
+ * `../service/state-machine/guard.ts`): the process requirement here is an
+ * approval, which the session can record seconds later, and the service-side
+ * twin `merge.requires_approving_code_review` now lets a merge through with
+ * a warning rather than refusing it. A wall on the command while the board
+ * itself warns would give one fact two contradictory answers. The
+ * recommendation is unchanged — land the approving review first — and at
+ * `nudge` there is nothing to override, so `overrideRemedy` appends nothing.
  */
 const mergeWithoutApprovalAtTip: Intervention = {
   id: "merge-without-approval-at-tip",
@@ -197,24 +201,18 @@ const mergeWithoutApprovalAtTip: Intervention = {
   summary: "A merge attempted while no approving review stands at the item's current tip commit.",
   phase: "pre",
   audience: "agent",
-  defaultLevel: "block-overridable",
+  defaultLevel: "nudge",
   defaultTiming: "immediate",
-  // ── The override is now reachable from here. Updated with row
-  // d8eb47ac-53a7-47ff-b167-2c089738531e.
-  //
-  // Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10 removed a "proceed with a
-  // written reason" sentence from this message because the only override
-  // channel was read from the TOP LEVEL of the payload, where an agent
-  // contributes nothing. An agent can now write the claim into its own
-  // command as a marked comment (`readCommandOverrideClaim` in
-  // `../hook/override.ts`), and this entry fires only on `Bash`, so the
-  // exit is genuinely available to every reader of this message.
-  //
-  // The sentence is still not restored *here*: `overrideRemedy` appends it,
-  // with the literal syntax and scoped to this entry, so that the accepted
-  // form is stated in exactly one place. What this message owes the caller
-  // is its own remedy — record the approving review — which is the better
-  // option and should not be made to look like the lesser one.
+  // This entry used to be `block-overridable`, which meant every firing
+  // also carried the override offer `overrideRemedy` appends at that level.
+  // (Row 4c423f0b-f1c8-4930-ad5b-e1d7aabe5c10 once removed an unreachable
+  // version of that sentence from this message; row
+  // d8eb47ac-53a7-47ff-b167-2c089738531e then made the channel reachable
+  // from a marked comment on the agent's own command.) At `nudge` the level
+  // itself answers what the offer used to ask: nothing is blocked, nothing
+  // needs overriding, and `overrideRemedy` returns null for this entry.
+  // What remains below is the entry's own remedy — record the approving
+  // review — which was always the better option.
   //
   // That remedy has to name a CALL, not an outcome. The previous wording,
   // "request a review against this commit", is what the caller already
@@ -229,7 +227,7 @@ const mergeWithoutApprovalAtTip: Intervention = {
   // says so. This message runs earlier, on the command, with none of those
   // facts resolved, so it deliberately does NOT restate that analysis. It
   // names the call and warns which conjunct usually failed; the service
-  // refusal supplies the numbers if the caller still gets it wrong.
+  // warning supplies the numbers if the caller still gets it wrong.
   //
   // **Backticks here mean "this is a call", and nothing else.** Only
   // `record_artifact` is backticked below; the artifact kinds and verdicts
@@ -250,15 +248,14 @@ const mergeWithoutApprovalAtTip: Intervention = {
     plain:
       "This merges work that nothing has ever approved — there is no approving code review on " +
       "this item at any round. Call `record_artifact` with kind code_review and an approving " +
-      "verdict, naming the commit being merged, and land that instead of merging now. If you " +
-      "believe this merge is right anyway, the reason you give is what makes it reviewable.",
+      "verdict, naming the commit being merged, and land that review first: a merge with the " +
+      "approval on the record is a merged state the board can actually stand behind.",
     prominent:
-      "⚠️ Do not proceed until you have read this. This would merge a change that nothing has " +
-      "ever approved: no approving code review exists on this item at any round, so it is not " +
-      "that a review went stale — none was recorded. Call `record_artifact` with kind " +
-      "code_review, an approving verdict, and the commit being merged as its sha; then merge. " +
-      "Instead of merging now, land the approval first — and if you proceed regardless, the " +
-      "reason you record is what makes the decision reviewable afterwards.",
+      "⚠️ This would merge a change that nothing has ever approved: no approving code review " +
+      "exists on this item at any round, so it is not that a review went stale — none was " +
+      "recorded. Call `record_artifact` with kind code_review, an approving verdict, and the " +
+      "commit being merged as its sha, then merge. The review going on the record before the " +
+      "merge is what makes the merged row trustworthy afterwards.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
     if (context.command === undefined) return { triggered: false };
@@ -267,9 +264,9 @@ const mergeWithoutApprovalAtTip: Intervention = {
     // question — no claim, or no commit to be at the tip of — and blocking
     // a merge on an unanswered question is how a guard becomes an obstacle.
     if (context.hasApprovalAtTip !== false) return { triggered: false };
-    // **The narrowing that made this entry worth blocking again.** An item
-    // that has been approved before is the stale-approval case, which
-    // `mergeWithStaleApproval` below picks up as a nudge. Strictly `false`
+    // **The narrowing that keeps this entry's message true.** An item that
+    // has been approved before is the stale-approval case, which
+    // `mergeWithStaleApproval` below picks up instead. Strictly `false`
     // for the same reason as above: `undefined` is an unasked question, and
     // an unasked question must not be read as "never reviewed".
     if (context.hasAnyApproval !== false) return { triggered: false };
@@ -290,8 +287,10 @@ const mergeWithoutApprovalAtTip: Intervention = {
  * ── Why this is its own entry, with numbers ────────────────────────────
  *
  * This situation and I10's share a command and a first condition, and they
- * deserve opposite answers — so they are two entries, because one entry's
- * `level` cannot soften one without softening the other. The recorded
+ * need different messages — so they are two entries rather than one with a
+ * branch, because the diagnosis that helps one would mislead the other (I10
+ * says "nothing has ever approved"; this one says "the approval moved on
+ * its own", and each is false of the other's case). The recorded
  * evidence is lopsided: the **approval half has a confirmed true positive**
  * (a genuinely unapproved merge, correctly stopped), while this half
  * produced **fifteen firings and one true positive.** Fourteen sessions
@@ -375,13 +374,21 @@ const mergeWithStaleApproval: Intervention = {
  * prompt costs none of that and catches the same mistake, because the
  * honest answer to "would a narrower kill do?" is almost always yes.
  *
- * Note this entry needs **no state at all** — it is the one blocking entry
- * that turns purely on the shape of the command, which is why
- * `./context.ts` deliberately has no branch for it. That is not an
- * inconsistency with the argument for putting judgement server-side: the
- * breadth of a kill genuinely is readable from the command, and the entry
- * is server-side because that is where the response ladder, the override
- * and the recorded reason live, not because the detection needed it.
+ * Note this entry needs **no state at all** — it turns purely on the shape
+ * of the command, which is why `./context.ts` deliberately has no branch
+ * for it. That is not an inconsistency with the argument for putting
+ * judgement server-side: the breadth of a kill genuinely is readable from
+ * the command, and the entry is server-side because that is where the
+ * response ladder and the recorded firings live, not because the detection
+ * needed it.
+ *
+ * **`nudge`, not a block** — the owner's rule that the board recommends
+ * rather than blocks, and this entry's own numbers agree: as a
+ * `block-overridable` it produced 448 blocks and 7 overrides across the
+ * deployment's whole life, and all seven overrides were probes. A wall here
+ * taught sessions to route around it rather than answer it; the prompt to
+ * think is the part that worked, and it does not need a block underneath
+ * it.
  */
 const broadProcessKill: Intervention = {
   id: "broad-process-kill",
@@ -389,39 +396,19 @@ const broadProcessKill: Intervention = {
   summary: "A kill that ends processes by image name rather than naming which processes to end.",
   phase: "pre",
   audience: "agent",
-  defaultLevel: "block-overridable",
+  defaultLevel: "nudge",
   defaultTiming: "immediate",
-  // This level is `block-overridable`, and as of row
-  // d8eb47ac-53a7-47ff-b167-2c089738531e the name is accurate about the
-  // *delivery* as well as the protocol.
-  //
-  // It was not, and the gap is the reason this comment is long. A caller
-  // could always re-run the call naming this entry with a written reason
-  // and have `decide` release it and record that reason — but only through
-  // a top-level `standup_override` field, and an agent's tool call reaches
-  // `tool_input` and nothing else. Measured across the deployment's whole
-  // life: 448 blocks, 7 overrides, and all seven were probes. This entry's
-  // audience is `agent`, so the exit existed for nobody who ever met it.
-  //
-  // `readCommandOverrideClaim` closes that. The claim rides a marked
-  // comment on the command itself — a construct the shell ignores, that the
-  // agent fully controls, and that is not a tool argument in the sense the
-  // principle cares about — and `payload.ts` lifts it to the same field.
-  // This entry turns purely on the command shape, so it is `Bash` by
-  // construction and the exit is always available here.
-  //
-  // **The messages below still do not mention the override**, and the
-  // reason is unchanged even though its premise flipped: `overrideRemedy`
-  // appends the offer, with the literal syntax, so the accepted form lives
-  // in one place rather than in five messages that could drift from the
-  // parser. What a message owes the caller is the *narrow* exit — which pid
-  // form to use — and appending a generic offer on top of that made the
-  // specific remedy look like the lesser option, which is backwards.
-  //
-  // A message must only offer an exit the protocol can honour. That rule is
-  // why `overrideRemedy` gates its agent-facing sentence on the tool rather
-  // than merely on the audience: an offer the caller cannot act on costs
-  // several attempts before anyone concludes it is not negotiable.
+  // This entry used to be `block-overridable`. The deployment's numbers
+  // settled the argument for what it is now: 448 blocks, 7 overrides, and
+  // all seven overrides were probes — the override channel (row
+  // d8eb47ac-53a7-47ff-b167-2c089738531e made it reachable from a marked
+  // comment on the agent's own command, via `readCommandOverrideClaim` in
+  // `../hook/override.ts`) turned out not to be what sessions wanted; they
+  // wanted to be told, not to negotiate. At `nudge` nothing is blocked, so
+  // `overrideRemedy` returns null for this entry and the messages below
+  // carry no override language: the whole of the intervention is the
+  // prompt to name the pids, which is what the messages have always led
+  // with.
   // ── Why the messages used to describe the finding rather than the command ──
   //
   // `broadProcessKillCause` distinguishes two findings that share a verdict
@@ -448,10 +435,11 @@ const broadProcessKill: Intervention = {
       "something that matches. Kill by process id instead: a command naming literal process " +
       "ids is accepted however many it names, and a force flag does not change that.",
     prominent:
-      "⚠️ Do not proceed until you have read this. This kill is not scoped to specific " +
-      "processes — it selects them by image name, and other sessions on this machine are very " +
-      "likely running something that matches. Find the process ids and kill those instead; " +
-      "naming literal ids is what makes a kill narrow, not the absence of a force flag.",
+      "⚠️ This kill is not scoped to specific processes — it selects them by image name, and " +
+      "other sessions on this machine are very likely running something that matches. The " +
+      "command will run: this is the warning, not the wall. Find the process ids and kill those " +
+      "instead — naming literal ids is what makes a kill narrow, not the absence of a force " +
+      "flag.",
   },
   predicate(context: InterventionContext): InterventionVerdict {
     if (context.command === undefined) return { triggered: false };
