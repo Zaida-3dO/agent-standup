@@ -2,8 +2,9 @@
 //
 // The load-bearing assertions here are about WHICH ROW EACH ACTION WRITES,
 // because that is the whole correctness question: a `needs_approval` row
-// approved with the wrong artifact kind satisfies no guard, leaves the item
-// held, and credits a human with a review an agent performed. Every
+// approved with the wrong artifact kind satisfies no guard, keeps the merge
+// guard's warning sounding, and credits a human with a review an agent
+// performed. Every
 // `toMatchObject` on `kind` below fails on a one-token change to
 // `DECISION_BY_REASON`, which is exactly the regression this file exists to
 // catch.
@@ -66,7 +67,9 @@ describe("approve — needs_approval", () => {
     // The one assertion this whole module exists for. `merge.requires_authorisation`
     // is satisfied only by `kind = 'merge_approval' AND createdByType = 'person'`
     // at the tip; a `code_review` here — which is what this code used to write —
-    // satisfies nothing and leaves the item held.
+    // satisfies nothing. Since the nudge conversion the merge can land over
+    // that silence-with-warning anyway, which makes naming the right kind
+    // matter, not less.
     expect(calls[0]?.body).toMatchObject({
       artifactKind: "merge_approval",
       createdByType: "person",
@@ -206,8 +209,10 @@ describe("approve — needs_visual_review", () => {
       commitSha: TIP,
     });
     // Only the artifact call. A recorded look clears one merge clause; the
-    // item may still be held by others, so moving it to `merged` here would
-    // assert a merge the other guards never agreed to.
+    // other guards may still have something to say, and since the nudge
+    // conversion a merge moved here would land over their warnings rather
+    // than being stopped — so asserting it on a person's say-so is exactly
+    // as wrong, and this module still never makes the move.
     expect(calls).toHaveLength(1);
   });
 });

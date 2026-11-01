@@ -125,7 +125,9 @@ describeIfDb("what the people write path unblocks", () => {
     // What `merge.requires_authorisation` needs to be satisfiable: a
     // *person* — not an agent — recorded as the creator of an approving
     // review. With no writer there was no person id to name here, so no
-    // `needs_approval` item could reach `merged`.
+    // `needs_approval` item could record the evidence that quiets the merge
+    // guards: refused outright before the nudge conversion, and reaching
+    // `merged` only over a warning that would never go quiet since.
     const reviewer = (await runtime.call("update_person", {
       id: "reviewer-b",
       displayName: "Reviewer B",
