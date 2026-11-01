@@ -19,7 +19,7 @@
 // exactly that artifact-side check. This guard enforces the request half:
 // an `Event` row of type `review_requested` for the item.
 import type { Guard, GuardInput } from "../state-machine/guard";
-import { guardOk, guardRejected } from "../state-machine/guard";
+import { guardNudged, guardOk } from "../state-machine/guard";
 import type { TransactionHandle } from "../context";
 
 interface CountRow {
@@ -43,14 +43,19 @@ async function hasReviewRequested(db: TransactionHandle, itemId: string): Promis
  */
 export const reviewRequestedGuard: Guard = {
   id: "artifact.review_requested",
-  description: "Entering in_review requires a review_requested event to have been recorded.",
+  description:
+    "Entering in_review nudges when no review_requested event has been recorded — the move " +
+    "is applied, and the answer says to record the request.",
   appliesTo: (_from, to) => to === "in_review",
   async check(input: GuardInput) {
     const ok = await hasReviewRequested(input.db, input.item.id);
     if (!ok) {
-      return guardRejected(
-        "No review has been requested yet — record a review_requested event before moving to in_review.",
-        { fields: ["state"] },
+      // A missing request row is process: the review can be requested on the
+      // spot, minutes after the item entered `in_review`, and the ledger is
+      // complete again — so this nudges rather than refuses.
+      return guardNudged(
+        "No review has been requested yet — in_review was entered with no review_requested " +
+          "event on the record. Record one (request_review) now so the request is on the ledger.",
       );
     }
     return guardOk;

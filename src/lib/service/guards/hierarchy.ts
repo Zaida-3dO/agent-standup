@@ -1,6 +1,7 @@
-// Guard — hierarchy: a parent cannot finish while a child is still
-// actionable. See docs/plans/MILESTONES.md #19, SCHEMA.md §5a, §1.1,
-// DECISIONS.md §13c.
+// Guard — hierarchy: a parent that finishes while a child is still
+// actionable is nudged, not blocked — the finish lands and the answer
+// names the open children. See docs/plans/MILESTONES.md #19, SCHEMA.md §5a,
+// §1.1, DECISIONS.md §13c.
 //
 // SCHEMA.md §5a states the rule for a `not_done` follow-up and then extends
 // it up the tree in the same sentence: "an item cannot complete while any
@@ -8,7 +9,7 @@
 // That is the rule this guard enforces, generalised from "a linked follow-up
 // item" to "any child row in the tree" — the same test, run against the
 // `items.parent_id` relationship instead of a `not_done` entry's `item_id`.
-import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
+import { guardNudged, guardOk, type Guard, type GuardInput } from "../state-machine/guard";
 import { NOT_ARCHIVED_CONDITION } from "../items/row";
 
 /**
@@ -51,12 +52,16 @@ const COMPLETED_STATES: ReadonlySet<string> = new Set([
   "cancelled",
 ]);
 
-interface ChildStateRow {
+interface ChildRow {
+  id: string;
+  headline: string;
   state: string;
 }
 
 /**
- * Whether `itemId` has at least one **direct** child in an actionable state.
+ * The **direct** children of `itemId` that are in an actionable state, in
+ * no particular order — empty when every child is finished, blocked or
+ * paused.
  *
  * Direct children only — not the whole subtree — and that is deliberately
  * sound rather than a narrowing of the rule, by induction on this same
@@ -74,24 +79,27 @@ interface ChildStateRow {
  * level, on every call, and never queries "any descendant" as a single
  * recursive shape.
  */
-async function hasActionableChild(db: GuardInput["db"], itemId: string): Promise<boolean> {
+async function actionableChildren(
+  db: GuardInput["db"],
+  itemId: string,
+): Promise<ChildRow[]> {
   // Archived children are not asked about (MILESTONES.md #137). An archived
   // row is one the installation has said should never have existed, and it
   // will never be transitioned again because no ordinary read can reach it
-  // to transition — so counting it as actionable would block its parent from
-  // ever finishing, citing a child the caller cannot see, cannot open, and
-  // cannot move. That is a deadlock, not a guard.
+  // to transition — so counting it as actionable would nudge its parent's
+  // finish toward a child the caller cannot see, cannot open, and cannot
+  // move. A warning the caller can never act on is noise, not a nudge.
   //
   // The induction in this function's header survives the exclusion. It turns
   // on a live grandchild keeping its immediate parent non-actionable, and an
   // archived item has no bearing on that: a live child is still asked about
   // here whatever its own children are doing, and archiving is never applied
   // to a row on behalf of its descendants.
-  const rows = await db.$queryRawUnsafe<ChildStateRow[]>(
-    `SELECT "state" FROM "Item" WHERE "parentId" = $1 AND ${NOT_ARCHIVED_CONDITION}`,
+  const rows = await db.$queryRawUnsafe<ChildRow[]>(
+    `SELECT "id", "headline", "state" FROM "Item" WHERE "parentId" = $1 AND ${NOT_ARCHIVED_CONDITION}`,
     itemId,
   );
-  return rows.some((row) => isActionable(row.state));
+  return rows.filter((row) => isActionable(row.state));
 }
 
 /**
@@ -112,18 +120,22 @@ async function hasActionableChild(db: GuardInput["db"], itemId: string): Promise
 export const hierarchyGuard: Guard = {
   id: "hierarchy.no_finish_with_actionable_child",
   description:
-    "A parent cannot finish while a child is still actionable (SCHEMA.md §5a) — every child must " +
-    "already be completed, blocked or paused.",
+    "A parent that finishes while a child is still actionable is nudged, not blocked (SCHEMA.md " +
+    "§5a) — the finish is applied and the answer names every open child, which should be " +
+    "completed, blocked or paused.",
   appliesTo: (_from, to) => COMPLETED_STATES.has(to),
   async check(input: GuardInput) {
-    const actionable = await hasActionableChild(input.db, input.item.id);
-    if (actionable) {
-      return guardRejected(
-        "This item has a child that is still actionable. Every child must be completed, blocked " +
-          "or paused before this item can finish.",
-        { fields: ["parent_id"] },
-      );
-    }
-    return guardOk;
+    const open = await actionableChildren(input.db, input.item.id);
+    if (open.length === 0) return guardOk;
+    // The nudge's whole value is naming which children: "a child is still
+    // actionable" sends a caller with five children to go and read the tree;
+    // naming them says exactly where to look.
+    const listed = open.map((child) => `"${child.headline}" (${child.state})`).join(", ");
+    const howMany =
+      open.length === 1 ? "one of its children was" : `${open.length} of its children were`;
+    return guardNudged(
+      `This item finished while ${howMany} still actionable: ${listed}. The finish was applied — ` +
+        "complete, block or pause each child listed here so the parent's completion reflects them.",
+    );
   },
 };

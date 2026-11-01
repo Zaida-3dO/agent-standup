@@ -6,14 +6,14 @@
 // itself: that guard asks "was this ever approved" (existence);
 // this one asks "is the newest approval still valid" (currency). Registered
 // on the same `(plan_review, executing)` pair so both run and both can
-// reject independently, each naming its own cause. #18's merge guard reuses
+// nudge independently, each naming its own cause. #18's merge guard reuses
 // `latestApprovalAtTip` directly (SCHEMA.md §16's `merged` row — "an
 // approving `code-review` artifact at the current `max(artifacts.
 // review_round)`" is the review-round-scoped shape of the exact same
 // question) rather than this guard, because `merged` is row #18's own
 // transition to gate, not this one's.
 //
-// **Why this can reject even when `plan-approval.ts` passes:** a plan can be
+// **Why this can nudge even when `plan-approval.ts` passes:** a plan can be
 // approved, then the branch keeps moving — a new `commit` artifact lands
 // after the approval — without anyone re-requesting review. At that point
 // `hasApproval` is still true (an approval row exists), but it is evidence
@@ -22,27 +22,26 @@
 // has nothing to say about any other transition, and in particular says
 // nothing about `merged`, which is row #18's to gate.
 import type { Guard, GuardInput } from "../state-machine/guard";
-import { guardOk, guardRejected } from "../state-machine/guard";
+import { guardNudged, guardOk } from "../state-machine/guard";
 import {
   approvalsExistButNameNoCommit,
   currentTipCommitSha,
   hasApproval,
   latestApprovalAtTip,
 } from "./artifact-tip";
-import {
-  reviewEvidenceOverrideRemedy,
-  reviewEvidenceOverrideSatisfies,
-} from "./review-evidence-override";
+import { reviewEvidenceOverrideSatisfies } from "./review-evidence-override";
 
 export const evidenceAtTipGuard: Guard = {
   id: "artifact.evidence_at_tip",
   description:
-    "An approved plan_review artifact must be at the item's current tip commit, not an earlier one.",
+    "An approved plan_review artifact that is not at the item's current tip commit nudges when " +
+    "entering executing from plan_review — the transition is applied and the answer names the " +
+    "repair.",
   appliesTo: (from, to) => from === "plan_review" && to === "executing",
   async check(input: GuardInput) {
-    // If nothing was ever approved, that is plan-approval.ts's rejection to
+    // If nothing was ever approved, that is plan-approval.ts's warning to
     // make, not this guard's — asking "is the evidence current" when there
-    // is no evidence at all would produce a confusing second rejection for
+    // is no evidence at all would produce a confusing second warning for
     // the same underlying fact. This guard only has something to say once an
     // approval actually exists.
     const approvedAtAll = await hasApproval(input.db, input.item.id, "plan_review");
@@ -56,14 +55,13 @@ export const evidenceAtTipGuard: Guard = {
       //
       // Checked inside this clause rather than as a separate guard, for the
       // structural reason `merge.ts` gives for the same decision: guards are
-      // AND-composed and the first rejection wins, so a new guard could only
-      // ever ADD a requirement — it could never satisfy the one this clause
-      // enforces. An alternative satisfier has to live where the requirement
-      // lives.
+      // AND-composed, so a separate guard could only ever ADD a requirement —
+      // it could never relax the one this clause enforces. An alternative
+      // satisfier has to live where the requirement lives.
       //
       // Checked only AFTER `latestApprovalAtTip` has already said no, so an
       // override is consumed only when the guard would actually have
-      // refused. An override recorded on an item whose approval is properly
+      // warned. An override recorded on an item whose approval is properly
       // at the tip is inert — it costs nothing and, more importantly, is not
       // counted as a firing, which keeps the override count an honest
       // measure of how often this guard's default was judged wrong.
@@ -73,7 +71,7 @@ export const evidenceAtTipGuard: Guard = {
       }
 
       const tip = await currentTipCommitSha(input.db, input.item.id);
-      // Which of the two refusals with a real tip this is — read from the
+      // Which of the two diagnoses with a real tip this is — read from the
       // data, not from a new branch in the control flow. `merge.ts` uses
       // this same helper to draw this same distinction on `code_review`,
       // where a real tip likewise makes both sides reachable.
@@ -89,7 +87,7 @@ export const evidenceAtTipGuard: Guard = {
       );
       // latestApprovalAtTip already treats an approval whose sha is a git
       // abbreviation of the tip (or of anything the tip's lineage stands in
-      // for) as current — see artifact-tip.ts's `shaMatches`. So a rejection
+      // for) as current — see artifact-tip.ts's `shaMatches`. So a warning
       // reaching here is never "the same commit, spelled at two lengths"; it
       // is either a real move (the plan changed after approval, and
       // re-review is the correct remedy) or an approval that never recorded
@@ -110,7 +108,7 @@ export const evidenceAtTipGuard: Guard = {
       //
       // Enumerated against real Postgres across all five no-commit shapes —
       // all-null, all-named, and both mixed orderings — and in every shape
-      // that refused, the approvals named a commit. There is therefore no
+      // that warned, the approvals named a commit. There is therefore no
       // second case to branch on in the NO-TIP arm: a conditional there
       // would be dead code. `approvalsExistButNameNoCommit` is consulted
       // only for the tip-present arm above, where both sides genuinely are
@@ -121,11 +119,21 @@ export const evidenceAtTipGuard: Guard = {
       // reader to change a plan that was approved perfectly well, and the
       // cheapest way to satisfy such a request is to attach a sha to a
       // review that was not about it — putting something false in the
-      // ledger to clear a gate, which every refusal in this file is
+      // ledger to clear a gate, which every warning in this file is
       // otherwise careful not to invite.
-      return guardRejected(
+      // A nudge, with the same three-way diagnosis as before — which of the
+      // causes this is still depends on reading the data, and the warning
+      // must stay that precise because the repairs differ. What changed is
+      // the last sentence: there is no wall to get past, so the message
+      // names the repair rather than an escape route. The
+      // `review_evidence_override` still exists for the ordering-trap case
+      // — recording one with a stated reason is how a caller says "nothing
+      // has actually moved" and stops this warning repeating on every later
+      // evaluation; it just no longer has to buy passage.
+      return guardNudged(
         (tip
-          ? `The most recent plan_review approval is not for the current tip commit (${tip}). ` +
+          ? `The most recent plan_review approval is not for the current tip commit (${tip}) — ` +
+            "executing was entered on plan evidence that is not current. " +
             (approvalsNameNoCommit
               ? // ── The ordering trap ──────────────────────────────────
                 //
@@ -154,19 +162,16 @@ export const evidenceAtTipGuard: Guard = {
                 "cause is order: recording a commit BEFORE taking the plan_review -> executing " +
                 "transition. Take the transition first and record the commit after it, and " +
                 "this does not arise. If the commit is already recorded, the plan was approved " +
-                "before it and still stands, use the override below rather than re-reviewing a " +
-                "plan nothing has changed about."
+                "before it and still stands: record a `review_evidence_override` naming that " +
+                "rather than re-reviewing a plan nothing has changed about, and this warning " +
+                "stops repeating."
               : "The plan has moved since it was approved — get it re-reviewed.")
           : "The most recent plan_review approval names a commit, but this item records no " +
             "`commit` artifact for it to be checked against. This is not staleness — nothing " +
             "has moved, and the approval is not the vague one here. Record a `commit` " +
             "artifact for the commit that was approved and this approval applies to it.") +
-          // Named here because without it this refusal is absolute: a caller
-          // who judges the plan has not materially moved has no way to say so
-          // and no way past. The block still stands — it is a block someone
-          // can pass only by writing down why, and being counted for it.
-          ` ${reviewEvidenceOverrideRemedy(evidenceAtTipGuard.id, tip !== null)}`,
-        { fields: ["state"] },
+          " Executing was applied with this warning; the repair named above is what puts the " +
+          "record in order.",
       );
     }
     return guardOk;

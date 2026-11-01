@@ -6,11 +6,14 @@
 //   |          | plus an auth check per `merge_authority`. |
 //
 // Four required-field checks, one per clause, registered separately so a
-// rejection always names the specific clause that failed rather than one
-// guard's ambiguous "no" — the same shape rows #16/#17/#19 already use for
-// `blocked`/`paused` and the artifact checks. All four `appliesTo` entering
-// `merged`, matching SCHEMA.md §16's table, which reads by "Entering", not by
-// a specific `(from, to)` pair.
+// refusal or a warning always names the specific clause it is about rather
+// than one guard's ambiguous "no" — the same shape rows #16/#17/#19 already
+// use for `blocked`/`paused` and the artifact checks. All four `appliesTo`
+// entering `merged`, matching SCHEMA.md §16's table, which reads by
+// "Entering", not by a specific `(from, to)` pair. Missing merge evidence
+// is process, so the clauses nudge (see `state-machine/guard.ts`'s header
+// for the nudge/refusal split); only a stored value this file cannot read
+// is refused.
 //
 // Reuses row #17's `artifact-tip.ts` primitives directly for the commit-sha
 // and tip-staleness questions (its own header: "#18's merge guard needs
@@ -39,7 +42,13 @@
 // conflate who WROTE a review with who AUTHORISED a merge, leaving the clause
 // satisfiable only by an act this guard's own message calls dishonest — which
 // is a hold that does not hold.
-import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
+import {
+  guardNudged,
+  guardOk,
+  guardRejected,
+  type Guard,
+  type GuardInput,
+} from "../state-machine/guard";
 // Key name from the accepted-key table, not a literal — see
 // `../state-machine/transition-fields.ts`.
 import { TRANSITION_FIELD } from "../state-machine/transition-fields";
@@ -60,7 +69,6 @@ import { MERGE_APPROVAL_KIND, personHasApprovedMerge } from "./merge-approval";
 // here. One module reads the constant, so the number in the refusal cannot
 // drift from the number enforced.
 import { MERGE_OVERRIDE_KIND, mergeOverrideSatisfies } from "./merge-override";
-import { MERGE_OVERRIDE_REMEDY } from "./override-syntax";
 import { reviewEvidenceOverrideSatisfies } from "./review-evidence-override";
 import {
   BLOCKING_SEVERITY_FLOOR,
@@ -77,30 +85,12 @@ import { pullRequestHasMerged } from "./merge-pull-request";
 
 const MERGE_AUTHORITIES = new Set(["pre_approved", "needs_approval", "agent_judgement", "pr"]);
 
-/**
- * The sentence every code-review refusal ends with, naming the override and
- * what it costs.
- *
- * **Stated in the refusal on purpose.** An earlier wording of this message
- * named a remedy — "proceed with a written reason" — that no surface
- * actually implemented, and a caller burned six attempts across three
- * hypotheses chasing it. An unreachable remedy is worse than none, because
- * it reads as actionable. This one names an operation that exists, the exact artifact
- * kind, and the two things that make it not-free: the reason is mandatory,
- * and the row is permanent and countable.
- *
- * One constant rather than the same prose in two places, so the two refusals
- * cannot drift into describing the escape hatch differently.
- *
- * **Built by `./override-syntax.ts`**, which builds the same sentence for
- * both service-level overrides so all of them describe the escape hatch
- * identically. The text it produces carries the literal `record_artifact`
- * call, because naming the artifact kind alone leaves the reader to work out
- * which tool records one and what its fields are called; see that module's
- * header for what that gap costs.
- */
-const OVERRIDE_REMEDY = MERGE_OVERRIDE_REMEDY;
-
+// The code-review refusals used to end with the `merge_override` remedy
+// sentence, built once for all service-level overrides by
+// `./override-syntax.ts`. A nudge needs no escape hatch from a wall that is
+// no longer there, so the nudged branches below no longer name it; an
+// override recorded beforehand still silences the warning silently, where
+// the satisfier lives.
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -112,20 +102,43 @@ function isNonEmptyString(value: unknown): value is string {
  * row, exactly what `currentTipCommitSha` reads), so "has a commit_sha" is
  * "has at least one `commit` artifact" — the same tip primitive row #17
  * built, reused rather than reimplemented.
+ *
+ * **Proof, when missing, is a nudge rather than a refusal.** The board's job
+ * is to point at the evidence worth recording, not to stand between finished
+ * work and its closing entry. So the merge is applied and the answer says
+ * what is absent. Proof can also be cheap on purpose: a caller holding a
+ * sentence or the PR title supplies `merge_proof`, and a caller who knows
+ * there is nothing to hold says `skip_proof: true` — an explicit decision
+ * beats a warning nobody asked for, and both silence the nudge because the
+ * caller has already engaged with the gap.
  */
 export const mergeRequiresCommitGuard: Guard = {
   id: "merge.requires_commit",
-  description: "Entering merged requires a commit artifact recording the commit_sha.",
+  description:
+    "Entering merged without a commit artifact recording the commit_sha nudges; merge_proof or skip_proof on the transition counts as proof.",
   appliesTo: (_from, to) => to === "merged",
   async check(input: GuardInput) {
     const tip = await currentTipCommitSha(input.db, input.item.id);
-    if (!tip) {
-      return guardRejected(
-        "No commit_sha recorded for this item — record a commit artifact before merging.",
-        { fields: ["state"] },
-      );
+    if (tip) {
+      return guardOk;
     }
-    return guardOk;
+    // `skip_proof` is read as exactly `true` on purpose: a truthy-but-not-
+    // boolean value (a string, a number) is a call the schema does not
+    // define, and treating it as a decision not to prove would apply the
+    // caller's typo silently.
+    if (input.fields[TRANSITION_FIELD.skip_proof] === true) {
+      return guardOk;
+    }
+    if (isNonEmptyString(input.fields[TRANSITION_FIELD.merge_proof])) {
+      return guardOk;
+    }
+    return guardNudged(
+      "No commit_sha recorded for this item — the merge was applied without commit " +
+        "evidence. Record a `commit` artifact for what shipped so the merged state names " +
+        "it. On the next merge, proof may travel with the call: `merge_proof` (a sentence, " +
+        "or the PR title, naming the change) or `skip_proof: true` when you know there is " +
+        "nothing to prove.",
+    );
   },
 };
 
@@ -145,15 +158,17 @@ export const mergeRequiresCommitGuard: Guard = {
  * checks (`hasApprovingArtifactAtCurrentRoundAndTip`) is what makes "current
  * round" mean what it is meant to: the round that reviewed *this* commit.
  *
- * Two distinct failure causes, kept as two distinct rejections rather than
+ * Two distinct failure causes, kept as two distinct nudges rather than
  * folded into one guard's ambiguous "no" — the same split row #17 makes
  * between `plan-approval.ts` (existence) and `evidence-at-tip.ts`
- * (currency): `hasApproval` is missing entirely → this guard rejects with
+ * (currency): `hasApproval` is missing entirely → this guard warns with
  * its own id; approved but not at the current round-and-tip → this guard
- * also rejects, naming the same id either way, because unlike the
+ * warns too, naming the same id either way, because unlike the
  * plan-review case there is no separate guard registered on this exact
  * clause to hand the second cause to — SCHEMA.md §16 states this as a
- * single required clause, not two.
+ * single required clause, not two. Every branch here is a nudge: the
+ * approval evidence a merged item should carry is process, and a merged
+ * row missing it can still be put right after the fact.
  *
  * ── Why the refusal says "last recorded commit", not "tip commit" ───────
  *
@@ -225,13 +240,12 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
     // higher round creates. Named explicitly so the caller is not told to go
     // and get a code review when the actual obstacle is a dead follow-up.
     if (historical.blockedByFollowUp) {
-      return guardRejected(
+      return guardNudged(
         "This item has a code review that merged on the promise its findings would be done " +
           `separately, but ${historical.blockedByFollowUp}. A historical_verification records ` +
           "that shipped code was inspected; it does not discharge a promise a review already " +
-          "made. Link a follow-up item that is still open, or re-review at a verdict matching " +
-          "what was actually found.",
-        { fields: ["state"] },
+          "made. The merge was applied — link a follow-up item that is still open now, or " +
+          "re-review at a verdict matching what was actually found.",
       );
     }
 
@@ -273,21 +287,22 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
 
     const approvedAtAll = await hasApproval(input.db, input.item.id, "code_review");
     if (!approvedAtAll) {
-      // When the window is open, a caller who has just been refused for
-      // want of a review is exactly the caller who needs to know the other
-      // path exists — and, more importantly, what it costs. Saying nothing
-      // here is what makes forging a `code_review` the discoverable option.
-      return guardRejected(
-        "No approved code_review artifact for this item — get the code reviewed and approved before merging." +
+      // When the window is open, a caller warned for want of a review is
+      // exactly the caller who needs to know the other path exists — and,
+      // more importantly, what it costs. Saying nothing here is what makes
+      // forging a `code_review` the discoverable option.
+      return guardNudged(
+        "No approved code_review artifact for this item — the merge was applied with no " +
+          "approving review on the record." +
           (historical.offerAlternative
             ? " If this item's work shipped before this installation existed and there is no " +
               "reviewer who could honestly have approved it, record a historical_verification " +
-              "artifact instead: it must name the commit it was checked against and say what " +
-              "was inspected, and it is recorded permanently as an inspection rather than as a " +
+              "artifact: it must name the commit it was checked against and say what was " +
+              "inspected, and it is recorded permanently as an inspection rather than as a " +
               "review."
             : "") +
-          ` ${OVERRIDE_REMEDY}`,
-        { fields: ["state"] },
+          " Get the change reviewed now — if the review finds problems, reopen the item " +
+          "before the merged record stands as final.",
       );
     }
     // Resolved through the diagnostic form, which returns the SAME row this
@@ -335,14 +350,13 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
         tip !== null &&
         (await approvalsExistButNameNoCommit(input.db, input.item.id, "code_review"))
       ) {
-        return guardRejected(
+        return guardNudged(
           `The most recent code_review approval does not record which commit it applies to, so ` +
             `it cannot be shown to cover the last recorded commit (${tip}). This is not ` +
-            `staleness — the review never named a commit. If it did review this commit, ` +
-            `re-record it with commitSha set; if the work is not about a commit at all, that is ` +
-            `what ${HISTORICAL_VERIFICATION_KIND} and ${MERGE_OVERRIDE_KIND} are for. ` +
-            OVERRIDE_REMEDY,
-          { fields: ["state"] },
+            `staleness — the review never named a commit. The merge was applied — if it did ` +
+            `review this commit, re-record it with commitSha set; if the work is not about a ` +
+            `commit at all, that is what ${HISTORICAL_VERIFICATION_KIND} and ` +
+            `${MERGE_OVERRIDE_KIND} are for.`,
         );
       }
 
@@ -369,9 +383,10 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
       // load-bearing: it is the mechanism by which a higher-round
       // verification demotes an `lgtm_with_followups` whose follow-up is dead
       // (see the cluster in tests/merge-guards.test.ts). Making an orphaned
-      // review qualify again would convert refusals into merges. The remedy
-      // offered is therefore the honest cheap one — re-record the review at
-      // the round that is actually current.
+      // review qualify again would silence the dead-bargain warning that
+      // rides on the same demotion. The remedy offered is therefore the
+      // honest cheap one — re-record the review at the round that is
+      // actually current.
       if (resolution.failedOn === "round") {
         const approvals = resolution.approvalsAtOtherRounds;
         const where = approvals
@@ -385,7 +400,7 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
           movers.length > 0
             ? `Round ${round} was set by ${movers.map((k) => `\`${k}\``).join(", ")}.`
             : `Round ${round} was set by another artifact on this item.`;
-        return guardRejected(
+        return guardNudged(
           `An approving code_review exists for this item at ${where}, but the item is now at ` +
             `review round ${round}, so that approval does not qualify. ${blame} ` +
             "This is NOT staleness: the review's commit was never compared against the tip " +
@@ -394,15 +409,15 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
             "non-review artifact after a review demotes that review without anything about the " +
             "code changing. Re-record the code_review at round " +
             `${round} if it still applies to the current commit, or, if review really was ` +
-            "re-requested, get the re-review that the new round is asking for." +
-            ` ${OVERRIDE_REMEDY}`,
-          { fields: ["state"] },
+            "re-requested, get the re-review that the new round is asking for. The merge was " +
+            "applied — re-recording the review is what makes the merged row honest again.",
         );
       }
 
-      return guardRejected(
+      return guardNudged(
         `The most recent code_review approval is not for the current review round (${round}) ` +
-          `and last recorded commit (${tip ?? "none"}).` +
+          `and last recorded commit (${tip ?? "none"}), so the merge was applied on an approval ` +
+          `that no longer qualifies.` +
           // The ledger-is-behind case, named FIRST because it is the cheapest
           // remedy and the one this refusal used to omit entirely.
           " If the review you are relying on names a commit that is a DESCENDANT of that sha," +
@@ -421,9 +436,7 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
           // immaterial.
           " If the sha moved only because the commit was rewritten (a squash merge, a rebase, an" +
           " amend), that is not staleness: record the landed commit artifact with `supersedesSha`" +
-          " set to the reviewed sha, and this approval carries forward without a new review." +
-          ` ${OVERRIDE_REMEDY}`,
-        { fields: ["state"] },
+          " set to the reviewed sha, and this approval carries forward without a new review.",
       );
     }
 
@@ -451,7 +464,7 @@ export const mergeRequiresApprovingCodeReviewGuard: Guard = {
     // `needs_approval` remains unaffected by it either way.
     const blocking = blockingFindings(resolvedApproval.verdict, resolvedApproval.findings);
     if (blocking.length > 0) {
-      return guardRejected(
+      return guardNudged(
         `The approving code_review is ${SEVERITY_GATED_VERDICT}, which claims only nits remain, ` +
           `but it records ${blocking.length} finding${blocking.length === 1 ? "" : "s"} graded ` +
           `${BLOCKING_SEVERITY_FLOOR} or above:
@@ -459,12 +472,12 @@ ${describeBlockingFindings(blocking)}
 ` +
           `A ${BLOCKING_SEVERITY_FLOOR}-or-worse finding under ${SEVERITY_GATED_VERDICT} blocks ` +
           "exactly as changes_required does — the verdict says the remainder is cosmetic and the " +
-          "findings say otherwise. Either fix them and get a re-review at the new commit, or, if " +
-          "they genuinely do not block this change, re-review recording the verdict that matches " +
-          "what was found: lgtm if they are not real, or lgtm_with_followups with a linked " +
-          "follow-up item if they are real but belong in separate work. Do not simply re-grade " +
-          "the findings downward to clear this.",
-        { fields: ["state"] },
+          "findings say otherwise. The merge was applied with these findings open. Either fix " +
+          "them and get a re-review at the new commit, or, if they genuinely do not block this " +
+          "change, re-review recording the verdict that matches what was found: lgtm if they are " +
+          "not real, or lgtm_with_followups with a linked follow-up item if they are real but " +
+          "belong in separate work. Do not simply re-grade the findings downward — that silences " +
+          "this warning by rewriting the finding rather than answering it.",
       );
     }
     return guardOk;
@@ -498,9 +511,10 @@ export const mergeRequiresVisualReviewGuard: Guard = {
     }
     const approvedAtAll = await hasApproval(input.db, input.item.id, "visual_review");
     if (!approvedAtAll) {
-      return guardRejected(
-        "This item needs visual review and has no approved visual_review artifact — get it " +
-          "visually reviewed before merging. " +
+      return guardNudged(
+        "This item needs visual review and has no approved visual_review artifact — the merge " +
+          "was applied without one. Get it visually reviewed now; if the review finds " +
+          "problems, reopen the item. " +
           // ── Naming the "this does not apply here" exit ──────────────────
           //
           // `needsVisualReview` is commonly set for a whole repo, so it also
@@ -527,7 +541,6 @@ export const mergeRequiresVisualReviewGuard: Guard = {
           "If this item has nothing to look at — a CI, release or workflow row — then the " +
           "requirement does not apply and the flag is what is wrong: clear it with " +
           "update_item {needsVisualReview: false} rather than recording a review nobody performed.",
-        { fields: ["state"] },
       );
     }
     const atTip = await latestApprovalAtTip(input.db, input.item.id, "visual_review");
@@ -548,17 +561,18 @@ export const mergeRequiresVisualReviewGuard: Guard = {
         " If this item has nothing to look at — a CI, release or workflow row — then the " +
         "requirement does not apply and the flag is what is wrong: clear it with " +
         "update_item {needsVisualReview: false} rather than recording a review nobody performed.";
-      return guardRejected(
-        (tip
-          ? `The most recent visual_review approval is not for the last recorded commit ` +
-            `(${tip}) — "last recorded" because the tip is derived from this item's own commit ` +
-            `artifacts, not from the repository. If the approval names a commit that is a ` +
-            `DESCENDANT of that sha, nothing is stale and the ledger is simply behind: record ` +
-            `a commit artifact at the reviewed commit. Otherwise the item has moved since it ` +
-            `was visually approved — get it re-reviewed.`
-          : "The most recent visual_review approval does not record which commit it applies to, " +
-            "so it cannot be trusted against the current tip. Get it re-reviewed.") + doesNotApply,
-        { fields: ["state"] },
+      return guardNudged(
+        "The merge was applied with no current visual review. " +
+          (tip
+            ? `The most recent visual_review approval is not for the last recorded commit ` +
+              `(${tip}) — "last recorded" because the tip is derived from this item's own commit ` +
+              `artifacts, not from the repository. If the approval names a commit that is a ` +
+              `DESCENDANT of that sha, nothing is stale and the ledger is simply behind: record ` +
+              `a commit artifact at the reviewed commit. Otherwise the item has moved since it ` +
+              `was visually approved — get it re-reviewed.`
+            : "The most recent visual_review approval does not record which commit it applies to, " +
+              "so it cannot be trusted against the current tip. Get it re-reviewed.") +
+          doesNotApply,
       );
     }
     return guardOk;
@@ -570,14 +584,15 @@ export const mergeRequiresVisualReviewGuard: Guard = {
  * `merge_authority`" and §1.3's three values:
  *
  *   - `pre_approved`    — merge when done, don't ask. Nothing further required.
- *   - `needs_approval`  — always block on a human. **A guard, not a
+ *   - `needs_approval`  — held for a human's decision: human approval is
+ *     recommended for this item. **A nudge, and a guard rather than a
  *     transition ban**: every `(from, to)` pair stays legal (guard.ts's own
- *     header — "never refuse a pair outright"), so this rejects until the
- *     required evidence exists rather than making `merged` unreachable for
- *     the item. §16 has no artifact kind for "a human approved the merge" —
- *     it is satisfied by a **`merge_approval` artifact recorded by a
- *     person** at the item's tip commit — SCHEMA.md §6e,
- *     `./merge-approval.ts`.
+ *     header — "never refuse a pair outright"), and the merge goes through
+ *     with the recommendation on the answer rather than standing between
+ *     finished work and its merged row. §16 has no artifact kind for "a
+ *     human approved the merge" — it is met by a **`merge_approval`
+ *     artifact recorded by a person** at the item's tip commit — SCHEMA.md
+ *     §6e, `./merge-approval.ts`.
  *
  *     **It deliberately does not read the `code_review` artifact**, however
  *     it was recorded. `created_by_type` records who *wrote* an artifact, not
@@ -600,11 +615,11 @@ export const mergeRequiresVisualReviewGuard: Guard = {
  *     a new round should not expire a human's decision at the same commit.
  *     See `./merge-approval.ts`.
  *
- *     **The refusal still names the standing-authorisation route.** A person
+ *     **The nudge still names the standing-authorisation route.** A person
  *     saying "merge this class of work without asking me each time" is
  *     expressed by setting the item's `merge_authority` to `pre_approved`,
  *     not by anything in the transition request. A caller who holds one
- *     otherwise reads this refusal as "go and fetch a human" and stalls on
+ *     otherwise reads this warning as "go and fetch a human" and stalls on
  *     work that was already authorised. Worth stating because the default
  *     cuts against it: an item minted by an agent lands on `needs_approval`,
  *     so the rows most likely to be covered by a standing grant are exactly
@@ -650,22 +665,25 @@ export const mergeRequiresAuthorisationGuard: Guard = {
       const approval = await personHasApprovedMerge(input.db, input.item.id);
       if (!approval.satisfied) {
         const tip = await currentTipCommitSha(input.db, input.item.id);
-        return guardRejected(
-          "merge_authority is needs_approval — this item is held for a person's decision, and " +
-            "no agent can supply it. " +
+        // A recommendation, never a person-only gate: the merge proceeds and
+        // the answer says human approval is recommended and how to record it
+        // afterwards. Wording is by role — never a named individual.
+        return guardNudged(
+          "merge_authority is needs_approval — human approval is recommended for this item, " +
+            "and the merge was applied without a recorded one. " +
             (approval.staleApprovalExists
               ? "A person did approve this item, but at a commit it has since moved past" +
                 (tip ? ` (current tip ${tip})` : "") +
                 ". The work changed after the decision was made, so the decision does not " +
                 "carry over: go back to them with what changed and record a fresh " +
                 `${MERGE_APPROVAL_KIND} naming the current commit.`
-              : `A person must record a ${MERGE_APPROVAL_KIND} artifact naming the commit to be ` +
-                `merged${tip ? ` (tip is ${tip})` : ""} before this item can merge.`) +
+              : `To put the record in order, have a person record a ${MERGE_APPROVAL_KIND} ` +
+                `artifact naming the commit that was merged${tip ? ` (tip is ${tip})` : ""}.`) +
             " This is a decision, not a review: a person approving work an agent reviewed is the " +
             "ordinary case, and it does not require them to have performed the review. Do NOT " +
             "record the code_review as a person instead — created_by_type says who WROTE the " +
             "artifact, so that credits a human with a review an agent performed and is not an " +
-            "authorisation at all. A merge_override does not satisfy this clause either; it " +
+            "authorisation at all. A merge_override does not substitute for it either; it " +
             "widens what counts as review evidence, never who may authorise. If a person has " +
             "already authorised this class of work in advance, that is a standing grant and " +
             // The hyphenated spelling deliberately: that is what `update_item`
@@ -673,7 +691,6 @@ export const mergeRequiresAuthorisationGuard: Guard = {
             // a remedy naming a value the operation refuses is the
             // unreachable-remedy failure #243 fixed elsewhere in this file.
             'belongs on the item: set mergeAuthority to "pre-approved" with update_item.',
-          { fields: ["state"] },
         );
       }
       return guardOk;
@@ -687,15 +704,15 @@ export const mergeRequiresAuthorisationGuard: Guard = {
         // saying "merge your PR" to that caller sends them to look at a PR
         // that may already have merged. A row that says `open` is the real
         // condition being unmet.
-        return guardRejected(
+        return guardNudged(
           pr.status === undefined
-            ? "merge_authority is pr — this item may merge only once its pull request has " +
-                "merged, and no pull_request artifact has been recorded for it. If the PR " +
-                "exists, record it with record_artifact (kind `pull_request`, the PR's http(s) " +
-                "URL in `ref`); once it merges, record a NEW pull_request row with body " +
+            ? "merge_authority is pr — the merged state was applied before the pull request " +
+                "landed, and no pull_request artifact has been recorded for this item. If the " +
+                "PR exists, record it with record_artifact (kind `pull_request`, the PR's " +
+                "http(s) URL in `ref`); once it merges, record a NEW pull_request row with body " +
                 "`merged`, since artifacts are append-only."
-            : `merge_authority is pr — this item may merge only once its pull request has ` +
-                `merged, and the newest pull_request artifact reports \`${pr.status}\`` +
+            : `merge_authority is pr — the merged state was applied before the pull request ` +
+                `landed: the newest pull_request artifact reports \`${pr.status}\`` +
                 `${pr.ref ? ` (${pr.ref})` : ""}. ` +
                 (pr.status === "closed"
                   ? "A closed PR is not a merged one — if the work landed under a different PR, " +
@@ -703,9 +720,8 @@ export const mergeRequiresAuthorisationGuard: Guard = {
                   : "") +
                 "Merge the PR on the forge, then record a NEW pull_request row with body " +
                 "`merged` — artifacts are append-only, so the row that opened it is never " +
-                "edited. No approval or override substitutes for this: the condition is a fact " +
-                "about the PR, not a decision anyone can make here.",
-          { fields: ["state"] },
+                "edited. Nothing substitutes for that fact: it is about the PR, not a decision " +
+                "anyone can make on the board.",
         );
       }
       return guardOk;
@@ -713,9 +729,10 @@ export const mergeRequiresAuthorisationGuard: Guard = {
 
     // agent_judgement
     if (!isNonEmptyString(input.fields[TRANSITION_FIELD.merge_rationale])) {
-      return guardRejected(
-        "merge_authority is agent_judgement — merging requires a recorded one-line merge_rationale.",
-        { fields: [TRANSITION_FIELD.merge_rationale] },
+      return guardNudged(
+        "merge_authority is agent_judgement, which commits to a recorded one-line rationale — " +
+          "none was supplied, so this merge went through with no stated reason. Record a note " +
+          "saying why you decided to merge, and put `merge_rationale` on the next merge.",
       );
     }
     return guardOk;
@@ -818,12 +835,12 @@ export const mergeRequiresLinkedFollowUpGuard: Guard = {
     }
 
     if (!approval.followUpItemId) {
-      return guardRejected(
+      return guardNudged(
         "The approving code_review is lgtm_with_followups, which merges without a further " +
           "review round only because its findings are recorded as separate work — but no " +
-          "follow-up item is linked to it. Create the follow-up and link it, or re-review at " +
-          "a verdict that matches what was actually found.",
-        { fields: ["state"] },
+          "follow-up item is linked to it. The merge was applied on that bargain: create the " +
+          "follow-up and link it now, or re-review at a verdict that matches what was " +
+          "actually found.",
       );
     }
 
@@ -838,18 +855,16 @@ export const mergeRequiresLinkedFollowUpGuard: Guard = {
       // leaving it dangling — but a row read in one transaction can still
       // race a delete in another, and a guard that assumed the FK made this
       // impossible would throw on `undefined` instead of refusing.
-      return guardRejected(
+      return guardNudged(
         `The approving code_review links follow-up item ${approval.followUpItemId}, which no ` +
-          "longer exists. Link a follow-up item that does.",
-        { fields: ["state"] },
+          "longer exists. The merge was applied — link a follow-up item that does.",
       );
     }
     if (CLOSED_ITEM_STATES.has(followUp.state)) {
-      return guardRejected(
+      return guardNudged(
         `The approving code_review links follow-up item ${followUp.id}, which is already ` +
           `${followUp.state} — a closed item cannot carry findings raised after it closed. ` +
-          "Link a follow-up that is still open.",
-        { fields: ["state"] },
+          "The merge was applied — link a follow-up that is still open.",
       );
     }
     return guardOk;

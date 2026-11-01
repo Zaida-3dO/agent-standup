@@ -60,6 +60,18 @@
 // work MORE visible, not less. This guard does not need to detect gaming;
 // the mechanism it is built on top of already converts gaming into
 // visibility.
+//
+// ── Why this guard refuses rather than nudges ────────────────────────────
+//
+// The line this directory draws (see `guard.ts`'s header): process
+// requirements — evidence the item can still acquire after the move —
+// nudge; faults in what the call itself *claims* refuse. A `not_done` entry
+// is a proof claim, and "the linked item's state bears this reason out" is
+// not a gap that can be filled in later: completing with a false proof
+// stored leaves a permanent record misstating why work was deferred, which
+// is the one thing `not_done` exists to prevent. Applying the move first
+// and warning afterwards would not make anything safer — the wrongness is
+// in the submitted data, so it stays on the refusal side of the line.
 import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
 // Key name from the accepted-key table, not a literal — see
 // `../state-machine/transition-fields.ts`.
@@ -316,13 +328,15 @@ export async function findNotDoneProofIssues(
 
       // 2. It is a sibling, not a descendant — DECISIONS.md §17's rule,
       //    enforced rather than advised. A descendant is precisely the shape
-      //    that deadlocks: `hierarchy.no_finish_with_actionable_child`
-      //    refuses to let a parent finish while an actionable child is open,
-      //    so an item recorded this way would be refused by that guard in
-      //    the same call. Catching it here names the real mistake — the
-      //    follow-up is parented under the work instead of beside it —
+      //    that contradicts the completion itself:
+      //    `hierarchy.no_finish_with_actionable_child` warns whenever a
+      //    parent finishes with an actionable child open, and this entry
+      //    claims the deferred work lives *inside* the item being finished —
+      //    the guard's warning and the summary's proof would contradict each
+      //    other on the same row. Catching it here names the real mistake —
+      //    the follow-up is parented under the work instead of beside it —
       //    rather than leaving the caller to infer it from a hierarchy
-      //    rejection that never mentions `not_done`.
+      //    warning that never mentions `not_done`.
       if (await isDescendantOf(db, linked.id, completingItemId)) {
         issues.push({
           field,

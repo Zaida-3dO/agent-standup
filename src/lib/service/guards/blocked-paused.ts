@@ -9,12 +9,26 @@
 //
 // A guard is a required-field check, never a forbidden move (guard.ts's own
 // header) — these two only ever say "you're missing something", never
-// "you can't go there". `appliesTo` keys on `to` alone, exactly as the table
+// "you can't go there". And a missing required field is process, so it
+// nudges rather than refuses: the state is entered, and the answer names
+// what was not recorded and how to record it now (re-entering the state with
+// the fields — these guards run on every entry, `from` included). What still
+// refuses is a supplied value outside the legal enum: the call itself is
+// malformed, there is no branch to explain, and applying it would store a
+// `blocked_on_type` no reader of the row can interpret.
+//
+// `appliesTo` keys on `to` alone, exactly as the table
 // above reads "Entering `blocked`" with no "from" column: it doesn't matter
 // where the transition started, including a re-entry from `blocked` itself
 // (see transition.ts's own comment on why the clearing step is guarded by
 // `to`, not just `from`, for the reason that matters here).
-import { guardOk, guardRejected, type Guard, type GuardInput } from "../state-machine/guard";
+import {
+  guardNudged,
+  guardOk,
+  guardRejected,
+  type Guard,
+  type GuardInput,
+} from "../state-machine/guard";
 // The literal key names come from the accepted-key table, not from string
 // literals here: a key this guard consumes but that table does not declare
 // would be refused at the door by `assertTransitionFieldsAccepted` and then
@@ -63,13 +77,19 @@ function isNonEmptyString(value: unknown): value is string {
  *
  * An invalid (rather than absent) `blocked_on_type` still refuses on its
  * own, because until the type is a legal value there is no branch to
- * report and listing a conditional field alongside it would be a guess.
+ * report and listing a conditional field alongside it would be a guess —
+ * and unlike a missing field, a value already supplied wrong cannot be
+ * completed by a later call: it has to be corrected at the source. That is
+ * the line this file draws — missing evidence nudges, a malformed supplied
+ * value refuses.
  */
 export const blockedRequiredFieldsGuard: Guard = {
   id: "state-machine.blocked_required_fields",
   description:
-    "Entering blocked requires blocked_reason and blocked_on_type, plus blocked_on_person " +
-    "when the type is person or unblock_at when the type is time.",
+    "Entering blocked nudges when required fields are missing: blocked_reason and " +
+    "blocked_on_type, plus blocked_on_person when the type is person or unblock_at when the " +
+    "type is time. Re-enter blocked with the fields to record them. A blocked_on_type that is " +
+    "not one of the three legal values is refused.",
   appliesTo: (_from, to) => to === "blocked",
   check(input: GuardInput) {
     const onType = input.fields[TRANSITION_FIELD.blocked_on_type];
@@ -105,32 +125,30 @@ export const blockedRequiredFieldsGuard: Guard = {
 
     if (missing.length === 0) return guardOk;
 
-    return guardRejected(blockedRefusalMessage(missing, onTypeSupplied ? String(onType) : null), {
-      fields: missing,
-      // The full requirement set, so a caller can see what it is working
-      // towards rather than inferring it from the subset this call missed.
-      details: {
-        required: [TRANSITION_FIELD.blocked_reason, TRANSITION_FIELD.blocked_on_type],
-        conditional: {
-          person: TRANSITION_FIELD.blocked_on_person,
-          time: TRANSITION_FIELD.unblock_at,
-          external_process: null,
-        },
-      },
-    });
+    // A nudge, not a refusal: the block itself is applied and the item is
+    // genuinely blocked — what is missing is the record of why, and the
+    // caller can supply it on this same item without undoing anything.
+    return guardNudged(blockedMissingMessage(missing, onTypeSupplied ? String(onType) : null));
   },
 };
 
 /**
- * The one message that names everything missing.
+ * The one message that names everything missing and how to record it now.
  *
  * Built here rather than inline so the branch explanation and the
  * already-satisfied case read as one piece of prose. `missing` is never
  * empty when this is called.
  */
-function blockedRefusalMessage(missing: readonly string[], onType: string | null): string {
+function blockedMissingMessage(missing: readonly string[], onType: string | null): string {
   const list = missing.join(", ");
   const head = `blocked requires ${list}.`;
+  // Re-entering the state re-runs this guard with the fields, which is how a
+  // blocked item gets its missing record after the fact — spelled out
+  // because "supply them together" is no use to a caller whose item is
+  // already sitting in `blocked`.
+  const howToFix =
+    " The block was applied without them — enter blocked again (blocked → blocked) with the " +
+    "missing fields supplied to record them.";
 
   if (onType === null) {
     // No type supplied, so the conditional requirement is not yet
@@ -139,34 +157,47 @@ function blockedRefusalMessage(missing: readonly string[], onType: string | null
       `${head} blocked_on_type must be one of ${BLOCKED_ON_TYPES.join(", ")}; ` +
       "a person block also requires blocked_on_person, and a time block also requires " +
       "unblock_at. external_process requires nothing further. " +
-      "Supply them together — this will not be accepted one field at a time."
+      "Supply them together — this will not be accepted one field at a time." +
+      howToFix
     );
   }
 
   if (onType === "person") {
-    return `${head} blocked_on_type is person, which requires blocked_on_person (a person id).`;
+    return (
+      `${head} blocked_on_type is person, which requires blocked_on_person (a person id).` +
+      howToFix
+    );
   }
   if (onType === "time") {
-    return `${head} blocked_on_type is time, which requires unblock_at (a timestamp).`;
+    return `${head} blocked_on_type is time, which requires unblock_at (a timestamp).` + howToFix;
   }
-  return `${head} blocked_on_type of ${onType} requires nothing further.`;
+  return `${head} blocked_on_type of ${onType} requires nothing further.` + howToFix;
 }
 
-/** Requires `pause_reason` and `resume_condition` on every entry to `paused`. */
+/**
+ * Nudges when `pause_reason` or `resume_condition` is missing on entry to
+ * `paused` — the pause is applied either way, and the answer says how to
+ * record what was skipped (enter `paused` again with the field, which
+ * re-runs this guard). See this file's header for the nudge/refusal line.
+ */
 export const pausedRequiredFieldsGuard: Guard = {
   id: "state-machine.paused_required_fields",
-  description: "Entering paused requires pause_reason and resume_condition.",
+  description:
+    "Entering paused nudges when pause_reason or resume_condition is missing. Re-enter " +
+    "paused with the field to record it.",
   appliesTo: (_from, to) => to === "paused",
   check(input: GuardInput) {
     if (!isNonEmptyString(input.fields[TRANSITION_FIELD.pause_reason])) {
-      return guardRejected("paused requires pause_reason.", {
-        fields: [TRANSITION_FIELD.pause_reason],
-      });
+      return guardNudged(
+        "paused requires pause_reason. The pause was applied without it — enter paused " +
+          "again (paused → paused) with pause_reason to record it.",
+      );
     }
     if (!isNonEmptyString(input.fields[TRANSITION_FIELD.resume_condition])) {
-      return guardRejected("paused requires resume_condition.", {
-        fields: [TRANSITION_FIELD.resume_condition],
-      });
+      return guardNudged(
+        "paused requires resume_condition. The pause was applied without it — enter paused " +
+          "again (paused → paused) with resume_condition to record it.",
+      );
     }
     return guardOk;
   },

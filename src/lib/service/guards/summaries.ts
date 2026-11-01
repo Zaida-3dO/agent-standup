@@ -2,6 +2,15 @@
 // `summaries` row. See docs/plans/MILESTONES.md #21, SCHEMA.md §16 ("any
 // completed state | A valid summaries row"), §5, §5a.
 //
+// **These stay refusals rather than nudges.** The line this directory draws
+// (see `guard.ts`'s header) is between process requirements — evidence the
+// item can acquire after the move — and faults in the submitted call. A
+// summary is not evidence the item acquires later: it *is* the completion
+// record the transition stores, so a missing or malformed one is a
+// malformed call, and a completion applied without its record has no later
+// transition that restores the missing thing honestly. Presence, shape,
+// caps, jargon and similarity checks therefore stay refusals.
+//
 // Lives here — `src/lib/service/guards/`, alongside `hierarchy.ts` (#19) —
 // rather than self-registering from `../summaries/`, so it is covered by
 // `tests/guards-registration.test.ts`'s canonicalisation sweep the same way
