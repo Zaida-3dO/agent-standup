@@ -167,17 +167,24 @@ describeIfDb("transition_item expectedFrom precondition", () => {
     });
 
     it("refuses before the guards run, so a stale call is not answered with a guard verdict computed from an expired premise", async () => {
-      // `executing -> blocked` without `blocked_reason` is rejected by
-      // `state-machine.blocked_required_fields` (guard_rejected/422)
-      // whenever the guards run. With a mismatched `expectedFrom` the answer
-      // must be `conflict` instead: the guard set is selected by the item's
-      // real `from`, so its verdict describes a move the caller did not
-      // ask about, while the item's actual state is what the caller can
-      // act on.
+      // Entering `blocked` with a supplied `blocked_on_type` outside the
+      // legal values is rejected by `state-machine.blocked_required_fields`
+      // (guard_rejected/422) whenever the guards run — the refusal that
+      // guard kept through the nudge conversion (a merely missing reason,
+      // which this test drove before, only warns now and the move lands).
+      // With a mismatched `expectedFrom` the answer must be `conflict`
+      // instead: the guard set is selected by the item's real `from`, so
+      // its verdict describes a move the caller did not ask about, while
+      // the item's actual state is what the caller can act on.
       const id = await createTask("executing");
 
       const error = await runtime
-        .call("transition_item", { id, to: "blocked", expectedFrom: "on_deck" })
+        .call("transition_item", {
+          id,
+          to: "blocked",
+          fields: { blocked_on_type: "design-team" },
+          expectedFrom: "on_deck",
+        })
         .then(
           () => {
             throw new Error("expected a refusal");
