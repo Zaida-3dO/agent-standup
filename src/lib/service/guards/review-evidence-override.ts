@@ -237,13 +237,16 @@ export async function reviewEvidenceOverrideSatisfies(
 }
 
 /**
- * The sentence a refusal ends with, naming the override and what it costs.
+ * The full syntax for filing an override of this kind, with what it costs.
  *
- * **Stated in the refusal on purpose**, and this is the property the whole
- * feature rests on. An earlier wording elsewhere in this repository named a
- * remedy — "proceed with a written reason" — that no surface implemented,
- * and a caller burned six attempts across three hypotheses chasing it. An
- * unreachable remedy is worse than none, because it reads as actionable.
+ * The guards this override silences now nudge rather than refuse, so this
+ * sentence is no longer printed on an answer. It stays exported and pinned
+ * because the override kind and its accepted shape are still real, and the
+ * property the whole feature rests on is that a remedy is stated in full. An
+ * earlier wording elsewhere in this repository named a remedy — "proceed
+ * with a written reason" — that no surface implemented, and a caller burned
+ * six attempts across three hypotheses chasing it. An unreachable remedy is
+ * worse than none, because it reads as actionable.
  *
  * `guardId` is named in the text because an override is scoped to the clause
  * it excuses, and because a reader counting overrides later needs to know

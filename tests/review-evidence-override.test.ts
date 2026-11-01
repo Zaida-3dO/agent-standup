@@ -12,8 +12,11 @@
 // where the tests that matter most are the ones asserting it does NOT work:
 // that it cannot be spent on a commit written after it, that it cannot
 // manufacture a person's authorisation, and that it cannot stand in for a
-// review that never happened. Those live at the bottom of this file under
-// "the boundaries", and they are the reason it exists.
+// review that never happened. The guards it feeds now nudge rather than
+// refuse, so "does NOT work" reads as "does not silence the warning": each
+// boundary test asserts the move lands AND the guard still speaks up. Those
+// live at the bottom of this file under "the boundaries", and they are the
+// reason it exists.
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -32,12 +35,7 @@ import {
   reviewEvidenceOverrideSatisfies,
 } from "@/lib/service/guards";
 import { guardRegistry } from "@/lib/service/state-machine/guard";
-import {
-  defineOperation,
-  isServiceError,
-  prismaTransactionRunner,
-  ServiceRuntime,
-} from "@/lib/service";
+import { defineOperation, prismaTransactionRunner, ServiceRuntime } from "@/lib/service";
 import { OPERATION_REGISTRY } from "@/lib/service/registry";
 import { defaultSnapshot } from "@/lib/settings";
 import type { ServiceContext } from "@/lib/service/context";
@@ -162,10 +160,22 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
     return reg;
   }
 
-  // ── The gap this closes: without an override this guard is absolute ────
+  type Nudge = { guard: string; message: string };
 
-  describe("artifact.evidence_at_tip — an absolute block, made passable with a reason", () => {
-    it("still refuses a stale plan approval when no override exists", async () => {
+  /**
+   * Drives a transition through `runtime.call` and returns the applied
+   * answer's nudges. Every guard this file exercises now nudges rather than
+   * refuses — that is what the boundary tests below pin — so each drive
+   * below lands, and the open question is only what the answer says.
+   */
+  async function appliedNudges(itemId: string, to: string, reg: GuardRegistry): Promise<Nudge[]> {
+    return ((await callTransition(itemId, to, reg)) as { nudges: Nudge[] }).nudges;
+  }
+
+  // ── The gap this closes: without an override this guard always speaks ──
+
+  describe("artifact.evidence_at_tip — a warning, silenced by a stated reason", () => {
+    it("still warns of a stale plan approval when no override exists, and moves", async () => {
       const id = await createTask("plan_review");
       await createArtifact({
         itemId: id,
@@ -175,10 +185,11 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
       });
       await createArtifact({ itemId: id, kind: "commit", commitSha: "b".repeat(40) });
 
-      const error = await callTransition(id, "executing", planGuards()).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
-      expect(await readState(id)).toBe("plan_review");
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("artifact.evidence_at_tip");
+      expect(nudges[0]?.message).toContain("has moved since it was approved");
+      expect(await readState(id)).toBe("executing");
     });
 
     it("lets a stale plan approval through when an override names the tip commit", async () => {
@@ -197,26 +208,52 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         body: GOOD_REASON,
       });
 
-      await callTransition(id, "executing", planGuards());
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toEqual([]); // an applied override buys silence, not just passage
       expect(await readState(id)).toBe("executing");
     });
 
-    it("names a reachable remedy in the refusal — the whole complaint was that there was none", async () => {
-      const id = await createTask("plan_review");
+    it("names the repair its diagnosis calls for: re-review when the plan moved, the override when it did not", async () => {
+      // The warning no longer needs to point at an escape route past a wall,
+      // so each branch of the diagnosis names only the repair that cause
+      // calls for — and the override is offered only where nothing actually
+      // moved. Spending one on a plan that genuinely moved is the corrupted
+      // count the ordering-trap rewrite in `evidence-at-tip.ts` exists to
+      // prevent.
+      const moved = await createTask("plan_review");
       await createArtifact({
-        itemId: id,
+        itemId: moved,
         kind: "plan_review",
         verdict: "approved",
         commitSha: "a".repeat(40),
       });
-      await createArtifact({ itemId: id, kind: "commit", commitSha: "b".repeat(40) });
+      await createArtifact({ itemId: moved, kind: "commit", commitSha: "b".repeat(40) });
+      const movedNudges = await appliedNudges(moved, "executing", planGuards());
+      expect(movedNudges).toHaveLength(1);
+      expect(movedNudges[0]?.guard).toBe("artifact.evidence_at_tip");
+      expect(movedNudges[0]?.message).toContain("get it re-reviewed");
+      expect(movedNudges[0]?.message).not.toContain(REVIEW_EVIDENCE_OVERRIDE_KIND);
 
-      const error = await callTransition(id, "executing", planGuards()).catch((e: unknown) => e);
-      // Names the artifact kind to record, and names the guard being
-      // overridden — the attribution the scoring work needs to tell "which
-      // guard's default is wrong" from "overriding happened".
-      expect((error as { message: string }).message).toContain(REVIEW_EVIDENCE_OVERRIDE_KIND);
-      expect((error as { message: string }).message).toContain("artifact.evidence_at_tip");
+      // The ordering trap: no approval names a commit and a tip exists — the
+      // only shape for which the override IS the named repair. The guard
+      // attribution the scoring work reads ("which guard's default was
+      // judged wrong" versus "overriding happened") now rides on the nudge's
+      // own `guard` field instead of prose in the message.
+      const unmoved = await createTask("plan_review");
+      await createArtifact({
+        itemId: unmoved,
+        kind: "plan_review",
+        verdict: "approved",
+        commitSha: null,
+      });
+      await createArtifact({ itemId: unmoved, kind: "commit", commitSha: "b".repeat(40) });
+      const trapNudges = await appliedNudges(unmoved, "executing", planGuards());
+      expect(trapNudges).toHaveLength(1);
+      expect(trapNudges[0]?.guard).toBe("artifact.evidence_at_tip");
+      expect(trapNudges[0]?.message).toContain(REVIEW_EVIDENCE_OVERRIDE_KIND);
+
+      expect(await readState(moved)).toBe("executing");
+      expect(await readState(unmoved)).toBe("executing");
     });
 
     it("an override does NOT fire when the approval is already at the tip — it stays inert and uncounted", async () => {
@@ -241,7 +278,8 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         body: GOOD_REASON,
       });
 
-      await callTransition(id, "executing", planGuards());
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
     });
   });
@@ -249,7 +287,7 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
   // ── The backfill case: an approval that never recorded a commit ────────
 
   describe("the sha-less anchor — the case that had a structurally untakeable remedy", () => {
-    // ── The shape of the null-tip refusal, stated precisely ──────────────
+    // ── The shape of the null-tip warning, stated precisely ──────────────
     //
     // The obvious reading — "the approval recorded no commit" — is NOT this
     // case, and asserting it produced two passing transitions and two failed
@@ -257,10 +295,10 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
     // matching a null candidate, so an approval with no sha on an item with
     // no commit is not stale and the guard never fires.
     //
-    // The reachable null-tip refusal is the reverse: the approval RECORDS a
+    // The reachable null-tip warning is the reverse: the approval RECORDS a
     // sha and the item records no commit artifact. Every approving row then
     // fails to match, and there is no tip for an override to name.
-    it("refuses when the approval names a sha but the item records no commit artifact", async () => {
+    it("warns when the approval names a sha but the item records no commit artifact", async () => {
       const id = await createTask("plan_review");
       await createArtifact({
         itemId: id,
@@ -269,12 +307,17 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         commitSha: "a".repeat(40),
       });
 
-      const error = await callTransition(id, "executing", planGuards()).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("artifact.evidence_at_tip");
+      // The no-tip diagnosis blames the missing `commit` artifact — nothing
+      // has moved, so it must not ask for a re-review.
+      expect(nudges[0]?.message).toContain("no `commit` artifact");
+      expect(nudges[0]?.message).not.toContain("has moved since it was approved");
+      expect(await readState(id)).toBe("executing");
     });
 
-    it("honours a sha-less override on exactly that item — the refusal with no sha to name", async () => {
+    it("honours a sha-less override on exactly that item — the warning with no sha to name", async () => {
       const id = await createTask("plan_review");
       await createArtifact({
         itemId: id,
@@ -289,13 +332,14 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         body: GOOD_REASON,
       });
 
-      await callTransition(id, "executing", planGuards());
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
     });
 
     it("an approval with no sha on an item with no commit is not stale at all — no override needed", async () => {
       // Pins the asymmetry the two tests above depend on. If this ever starts
-      // refusing, the null-tip semantics have changed underneath this feature
+      // warning, the null-tip semantics have changed underneath this feature
       // and the sha-less allowance is answering a different question.
       const id = await createTask("plan_review");
       await createArtifact({
@@ -305,7 +349,8 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         commitSha: null,
       });
 
-      await callTransition(id, "executing", planGuards());
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toEqual([]);
       expect(await readState(id)).toBe("executing");
     });
 
@@ -328,10 +373,10 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         body: GOOD_REASON,
       });
 
-      const error = await callTransition(id, "executing", planGuards()).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
-      expect(await readState(id)).toBe("plan_review");
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("artifact.evidence_at_tip");
+      expect(await readState(id)).toBe("executing"); // the move lands; the silence is what is lost
     });
 
     it("does NOT honour a sha-NAMING override on an item with no tip — it is about a commit this item has no record of", async () => {
@@ -349,9 +394,13 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         body: GOOD_REASON,
       });
 
-      const error = await callTransition(id, "executing", planGuards()).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("artifact.evidence_at_tip");
+      // Still the no-tip diagnosis: the override names a commit the item has
+      // no record of, so it excuses nothing here.
+      expect(nudges[0]?.message).toContain("no `commit` artifact");
+      expect(await readState(id)).toBe("executing");
     });
   });
 
@@ -381,9 +430,13 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         createdAt: new Date(Date.now() + 1000),
       });
 
-      const error = await callTransition(id, "executing", planGuards()).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("artifact.evidence_at_tip");
+      // The tip has moved past the commit the override named — the same
+      // stale diagnosis as if no override existed at all.
+      expect(nudges[0]?.message).toContain("not for the current tip commit");
+      expect(await readState(id)).toBe("executing");
     });
 
     it("survives a squash that rewrites the tip, via supersedesSha lineage", async () => {
@@ -414,7 +467,8 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         createdAt: new Date(Date.now() + 1000),
       });
 
-      await callTransition(id, "executing", planGuards());
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toEqual([]); // the lineage keeps the override in force — and silent
       expect(await readState(id)).toBe("executing");
     });
   });
@@ -440,17 +494,20 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         body: GOOD_REASON,
       });
 
-      await callTransition(id, "merged", mergeGuards());
+      const nudges = await appliedNudges(id, "merged", mergeGuards());
+      expect(nudges).toEqual([]); // the shared claim silences this clause too
       expect(await readState(id)).toBe("merged");
     });
 
-    it("still refuses when no override and no review exist", async () => {
+    it("warns when no override and no review exist — the merge lands anyway", async () => {
       const id = await createTask("in_review");
       await createArtifact({ itemId: id, kind: "commit", commitSha: "b".repeat(40) });
 
-      const error = await callTransition(id, "merged", mergeGuards()).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect((error as { guard?: string }).guard).toBe("merge.requires_approving_code_review");
+      const nudges = await appliedNudges(id, "merged", mergeGuards());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_approving_code_review");
+      expect(nudges[0]?.message).toContain("No approved code_review");
+      expect(await readState(id)).toBe("merged");
     });
   });
 
@@ -460,8 +517,11 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
     it("does NOT satisfy merge.requires_authorisation on a needs_approval item", async () => {
       // The load-bearing distinction in this whole area: an override widens
       // what counts as review EVIDENCE, never who may AUTHORISE a merge. An
-      // agent may not supply a person's decision. If this ever passes, the
-      // escape hatch has become a way to forge authorisation.
+      // agent may not supply a person's decision. The clause nudges rather
+      // than refuses now, so the forgery proof is that a review-evidence
+      // override leaves the authorisation warning sounding: if this ever
+      // goes silent, the escape hatch has become a way to forge
+      // authorisation.
       const id = await createTask("in_review", "needs_approval");
       await createArtifact({ itemId: id, kind: "commit", commitSha: "b".repeat(40) });
       await createArtifact({
@@ -474,17 +534,26 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
       const reg = new GuardRegistry();
       reg.register(mergeRequiresAuthorisationGuard);
 
-      const error = await callTransition(id, "merged", reg).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect((error as { guard?: string }).guard).toBe("merge.requires_authorisation");
-      expect(await readState(id)).toBe("in_review");
+      const nudges = await appliedNudges(id, "merged", reg);
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("merge.requires_authorisation");
+      // Warning, not person-only gate — and worded by role, never naming an
+      // individual. The override is called out as no substitute in the
+      // sentence itself.
+      expect(nudges[0]?.message).toContain("human approval is recommended");
+      expect(nudges[0]?.message).toContain("never who may authorise");
+      expect(await readState(id)).toBe("merged");
     });
 
     it("does NOT stand in for a plan review that never happened", async () => {
       // `artifact.plan_approval` asks whether a plan was EVER approved. An
       // override says a recorded review still stands — which is not a claim
       // anybody can make about a review that was never recorded. The
-      // override must not reach the existence clause.
+      // override must not reach the existence clause. The nudge-era proof is
+      // that `artifact.plan_approval` keeps warning while
+      // `artifact.evidence_at_tip` stays silent: it has nothing to say with
+      // no evidence at all, and an override reaching that far would make a
+      // currency claim about nothing.
       const id = await createTask("plan_review");
       await createArtifact({ itemId: id, kind: "commit", commitSha: "b".repeat(40) });
       await createArtifact({
@@ -494,10 +563,11 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         body: GOOD_REASON,
       });
 
-      const error = await callTransition(id, "executing", planGuards()).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect((error as { guard?: string }).guard).toBe("artifact.plan_approval");
-      expect(await readState(id)).toBe("plan_review");
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("artifact.plan_approval");
+      expect(nudges[0]?.message).toContain("No approved plan_review");
+      expect(await readState(id)).toBe("executing");
     });
 
     it("ignores an override whose body is null, however well-scoped", async () => {
@@ -520,9 +590,10 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         body: null,
       });
 
-      const error = await callTransition(id, "executing", planGuards()).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("artifact.evidence_at_tip");
+      expect(await readState(id)).toBe("executing");
     });
 
     it("belongs to one item only — an override on a sibling does not excuse this one", async () => {
@@ -542,9 +613,10 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
         body: GOOD_REASON,
       });
 
-      const error = await callTransition(id, "executing", planGuards()).catch((e: unknown) => e);
-      expect(isServiceError(error)).toBe(true);
-      expect((error as { guard?: string }).guard).toBe("artifact.evidence_at_tip");
+      const nudges = await appliedNudges(id, "executing", planGuards());
+      expect(nudges).toHaveLength(1);
+      expect(nudges[0]?.guard).toBe("artifact.evidence_at_tip");
+      expect(await readState(id)).toBe("executing");
     });
   });
 
@@ -608,7 +680,7 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
     });
   });
 
-  describe("reviewEvidenceOverrideRemedy — the sentence a refused caller reads", () => {
+  describe("reviewEvidenceOverrideRemedy — the override's accepted shape, still pinned to the parser", () => {
     it("names the guard, the kind, and the reason floor", () => {
       const text = reviewEvidenceOverrideRemedy("artifact.evidence_at_tip", true);
       expect(text).toContain("artifact.evidence_at_tip");
@@ -626,11 +698,13 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
 
     // ── The syntax, not just the offer ──────────────────────────────────
     //
-    // Naming the artifact kind was never the gap. A refused caller knows
-    // WHAT to file and still has to work out which tool files it and what
-    // its fields are called — and the catalogue note of 2026-09-10 records
-    // what that costs: four attempts, four byte-identical refusals, and a
-    // justified merge abandoned. These pin the literal call.
+    // Naming the artifact kind was never the gap. A caller told to record an
+    // override still has to work out which tool files it and what its fields
+    // are called — and the catalogue note of 2026-09-10 records what that
+    // costs: four attempts, four byte-identical refusals, and a justified
+    // merge abandoned. The nudging guards no longer print this sentence, but
+    // their warnings name these kinds, so the literal call stays pinned —
+    // a documented bypass whose shape drifts is an undiscoverable one again.
     it("names the operation that files the override, not only the artifact kind", () => {
       const text = reviewEvidenceOverrideRemedy("artifact.evidence_at_tip", true);
       // The tool name. Without it the caller is told what to record and not
@@ -638,7 +712,7 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
       expect(text).toContain("record_artifact");
       // Every field that call needs. `createdByType`/`createdById` are
       // optional on `record_artifact` ONLY for a caller holding a live
-      // assignment; a refused caller may hold none, so the example shows
+      // assignment; a warned caller may hold none, so the example shows
       // them rather than working for the luckier half of its readers.
       expect(text).toContain("itemId");
       expect(text).toContain("body");
@@ -650,7 +724,7 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
       // The field must appear in the with-tip form and be ABSENT from the
       // no-tip one — on a commitless item only a sha-less override is
       // honoured, so printing the field there would offer the single shape
-      // guaranteed to be refused.
+      // guaranteed to be inert.
       expect(reviewEvidenceOverrideRemedy("g", true)).toContain('"commitSha"');
       expect(reviewEvidenceOverrideRemedy("g", false)).not.toContain('"commitSha"');
     });
@@ -700,8 +774,8 @@ describeIfDb("review_evidence_override (§6c-bis), against Postgres", () => {
 
     // An override is filed AGAINST a named guard, and the merge remedy
     // prints that name. If the guard's own `id` drifted from the constant
-    // the sentence quotes, the refusal would tell a caller to attribute an
-    // override to a clause that did not refuse them — and the count that
+    // the sentence quotes, the sentence would tell a caller to attribute an
+    // override to a clause that never offered one — and the count that
     // makes overrides reviewable would be attributed to the wrong guard.
     it("prints the merge guard's own id in the sentence offering its override", () => {
       expect(mergeRequiresApprovingCodeReviewGuard.id).toBe(MERGE_OVERRIDE_GUARD_ID);

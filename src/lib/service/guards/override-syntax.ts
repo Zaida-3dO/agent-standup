@@ -133,18 +133,18 @@ export function overrideRemedySentence(options: {
 }
 
 /**
- * The guard whose refusals carry `MERGE_OVERRIDE_REMEDY`.
+ * The guard `MERGE_OVERRIDE_REMEDY` names.
  *
- * Exported so `merge.ts` can assert its own guard's `id` equals it rather
- * than the two agreeing by coincidence. The remedy names the guard it
- * excuses, and an override is scoped to that name — so a guard id that
- * drifted from the one printed in its own refusal would tell a caller to
- * file an override attributed to a clause that did not refuse them.
+ * Exported so the guard's own id and this constant are held in agreement by
+ * a direct assertion rather than agreeing by coincidence. The remedy names
+ * the guard it excuses, and an override is scoped to that name — so an id
+ * that drifted from the one printed in its own override sentence would
+ * attribute an override to a clause that never offered one.
  */
 export const MERGE_OVERRIDE_GUARD_ID = "merge.requires_approving_code_review";
 
 /**
- * The sentence every code-review merge refusal ends with.
+ * The sentence that offers the code-review merge override.
  *
  * Lives here rather than in `merge.ts` so that both service-level overrides
  * are built by one function — see this module's header on drift. A
