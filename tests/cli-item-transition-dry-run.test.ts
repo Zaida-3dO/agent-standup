@@ -39,10 +39,12 @@ const items = new Map<string, FakeItem>();
  * A `transition_item` stand-in that is faithful to the one property this
  * file is about: a real move mutates `items`, a dry run never does, and both
  * report the same outcome shape row #27's real operation does
- * (`state-machine/transition.ts`'s `TransitionOutcome`). `to: "blocked"`
- * with no `blocked_reason` field is the one rejecting case — chosen because
- * it is exactly SCHEMA.md §16's own worked example, not because this stands
- * in for the real guard registry.
+ * (`state-machine/transition.ts`'s `TransitionOutcome`). The one rejecting
+ * case is `to: "blocked"` with a supplied `blocked_on_type` outside the
+ * legal set — after the nudge conversion that is what this guard still
+ * refuses (a malformed supplied value is an integrity fault), whereas a
+ * merely missing reason only warns, and a warning has no wall here to
+ * rehearse against. Not because this stands in for the real guard registry.
  */
 const fakeService = {
   async call(name: string, input: unknown): Promise<unknown> {
@@ -59,7 +61,14 @@ const fakeService = {
     if (!item) throw new NotFoundError(`No such item: ${id}.`, { fields: ["id"] });
 
     const from = item.state;
-    const rejected = to === "blocked" && !fields?.blocked_reason;
+    // The refusal shape that survives the nudge conversion: a SUPPLIED
+    // value outside the enum is refused; a missing field would only warn,
+    // and this fake stays silent about warnings — it is the wire this file
+    // tests, not the guard.
+    const rejected =
+      to === "blocked" &&
+      fields?.blocked_on_type !== undefined &&
+      !["person", "external_process", "time"].includes(String(fields.blocked_on_type));
     const outcome = rejected
       ? {
           itemId: id,
@@ -70,8 +79,8 @@ const fakeService = {
           rejection: {
             code: "guard_rejected" as const,
             guard: "state-machine.blocked_required_fields",
-            message: "blocked needs a reason.",
-            fields: ["blocked_reason"],
+            message: 'blocked requires a valid blocked_on_type: got "design-team".',
+            fields: ["blocked_on_type"],
           },
         }
       : { itemId: id, from, to, allowed: true as const, rehearsed: true as const };
@@ -103,8 +112,8 @@ const fakeService = {
     if (rejected) {
       throw new GuardRejectedError(
         "state-machine.blocked_required_fields",
-        "blocked needs a reason.",
-        { fields: ["blocked_reason"] },
+        'blocked requires a valid blocked_on_type: got "design-team".',
+        { fields: ["blocked_on_type"] },
       );
     }
 
@@ -196,13 +205,23 @@ describe("--dry-run genuinely does not mutate state (direct binding)", () => {
 
   it("a REJECTED dry run still reports 200/ok — a preview, not an internal failure — and does not mutate", async () => {
     const outcome = await runCommand(
-      ["item", "transition", "item-1", "--to", "blocked", "--dry-run"],
+      [
+        "item",
+        "transition",
+        "item-1",
+        "--to",
+        "blocked",
+        "--dry-run",
+        "--fields",
+        '{"blocked_reason":"waiting on design","blocked_on_type":"design-team"}',
+      ],
       directBinding(),
     );
 
     // The assertion that separates a preview from a failure. A rehearsal of
-    // a move the guards refuse is a *successful* call carrying a rejection
-    // in its payload (§16), so anything that routed it through the generic
+    // a move the guards still refuse (here: a supplied blocked_on_type
+    // outside the legal set) is a *successful* call carrying a rejection in
+    // its payload (§16), so anything that routed it through the generic
     // error handling would report `internal` and exit 1 rather than the
     // accepted preview this is.
     expect(outcome.exitCode).toBe(EXIT.OK);
@@ -215,7 +234,15 @@ describe("--dry-run genuinely does not mutate state (direct binding)", () => {
 
   it("the same call WITHOUT --dry-run is a real rejection (exit 3), and still never mutates", async () => {
     const outcome = await runCommand(
-      ["item", "transition", "item-1", "--to", "blocked"],
+      [
+        "item",
+        "transition",
+        "item-1",
+        "--to",
+        "blocked",
+        "--fields",
+        '{"blocked_reason":"waiting on design","blocked_on_type":"design-team"}',
+      ],
       directBinding(),
     );
 
@@ -227,9 +254,11 @@ describe("--dry-run genuinely does not mutate state (direct binding)", () => {
   });
 
   it("--fields threads through to the guard the same way on a dry run", async () => {
-    // Proves `fields` reaches the operation from `--fields`, not just `to`
-    // and `dryRun` — with a real reason supplied, "blocked" is allowed.
-    const outcome = await runCommand(
+    // Proves `fields` reaches the guard from `--fields`, not just `to` and
+    // `dryRun`: the supplied blocked_on_type decides the answer. Outside the
+    // legal set it is refused (the guard saw the bad value); with the
+    // record complete the same move is allowed.
+    const refused = await runCommand(
       [
         "item",
         "transition",
@@ -238,14 +267,32 @@ describe("--dry-run genuinely does not mutate state (direct binding)", () => {
         "blocked",
         "--dry-run",
         "--fields",
-        '{"blocked_reason":"waiting on design"}',
+        '{"blocked_reason":"waiting on design","blocked_on_type":"design-team"}',
       ],
       directBinding(),
     );
+    expect(refused.exitCode).toBe(EXIT.OK);
+    if (!refused.envelope.ok) throw new Error("unreachable");
+    expect(refused.envelope.data).toMatchObject({
+      outcome: { allowed: false, rejection: { fields: ["blocked_on_type"] } },
+    });
 
-    expect(outcome.exitCode).toBe(EXIT.OK);
-    if (!outcome.envelope.ok) throw new Error("unreachable");
-    expect(outcome.envelope.data).toMatchObject({ outcome: { allowed: true } });
+    const allowed = await runCommand(
+      [
+        "item",
+        "transition",
+        "item-1",
+        "--to",
+        "blocked",
+        "--dry-run",
+        "--fields",
+        '{"blocked_reason":"waiting on design","blocked_on_type":"person","blocked_on_person":"design-lead"}',
+      ],
+      directBinding(),
+    );
+    expect(allowed.exitCode).toBe(EXIT.OK);
+    if (!allowed.envelope.ok) throw new Error("unreachable");
+    expect(allowed.envelope.data).toMatchObject({ outcome: { allowed: true } });
     expect(items.get("item-1")?.state).toBe("on_deck");
   });
 });
@@ -286,7 +333,18 @@ describe("both bindings agree on a dry run — the property row #94 will pin acr
   });
 
   it("a REJECTED dry run", async () => {
-    const argv = ["item", "transition", "item-1", "--to", "blocked", "--dry-run"];
+    // A supplied blocked_on_type outside the legal set — one of the moves
+    // the guards still refuse after the nudge conversion.
+    const argv = [
+      "item",
+      "transition",
+      "item-1",
+      "--to",
+      "blocked",
+      "--dry-run",
+      "--fields",
+      '{"blocked_reason":"waiting on design","blocked_on_type":"design-team"}',
+    ];
     const direct = await runCommand(argv, directBinding());
     items.set("item-1", { id: "item-1", state: "on_deck" });
     const http = await runCommand(argv, httpBinding());
