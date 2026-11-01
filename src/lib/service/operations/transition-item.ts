@@ -150,7 +150,9 @@ async function loadItemRecord(ctx: ServiceContext, id: string): Promise<ItemReco
 export const transitionItem = defineOperation({
   name: "transition_item",
   kind: "write",
-  summary: "Moves an item to a new state, validating what that state requires. Supports dry_run.",
+  summary:
+    "Moves an item to a new state. What the state recommends is reported as nudges on the " +
+    "answer; only malformed input refuses. Supports dry_run.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: TransitionItemInput): Promise<TransitionItemResult> {

@@ -117,11 +117,14 @@ const inputSchema = z
     to: z.enum(COMPLETED_STATES),
     summary: summarySchema,
     /**
-     * Extra fields other guards on this `(from, to)` pair need — e.g.
-     * `commit_sha` and the approving-review artifacts `merged` requires
-     * (SCHEMA.md §16). Merged with `summary` before being handed to the
-     * guard layer; a caller cannot use this to smuggle a second `summary`
-     * key past the dedicated field above.
+     * Extra fields the guards on this `(from, to)` pair read — e.g.
+     * `merge_rationale` for an `agent_judgement` merge, or `merge_proof`
+     * (a sentence, or the PR title) and `skip_proof` when completing to
+     * `merged` without a recorded commit artifact (SCHEMA.md §16).
+     * Missing merge evidence nudges rather than refusing; these keys let
+     * the caller say so on the call. Merged with `summary` before being
+     * handed to the guard layer; a caller cannot use this to smuggle a
+     * second `summary` key past the dedicated field above.
      */
     fields: z.record(z.string(), z.unknown()).optional(),
     /**
@@ -249,17 +252,21 @@ const contract = {
     {
       fields: ["fields", "summary"],
       rule:
-        "`fields` carries extras other guards on this transition need (a `commit_sha`, for " +
-        "instance). It may not contain `summary` — pass that in the top-level `summary` field.",
+        "`fields` carries what the target state's guards read: `merge_rationale` for an " +
+        "`agent_judgement` merge, `merge_proof` (a sentence or the PR title) or `skip_proof: " +
+        "true` to state the proof position on the call when completing to `merged`. It may not " +
+        "contain `summary` — pass that in the top-level `summary` field.",
     },
     {
       fields: ["to"],
       rule:
         `\`to\` must be one of the completed states (${COMPLETED_STATES.join(", ")}), and the ` +
         `transition's own guards still apply on top of the summary: completing to \`merged\` ` +
-        `additionally needs the merge evidence that state requires. \`to\` also selects which ` +
-        `summary field is mandatory — \`shipped\` for the states that delivered something, ` +
-        `\`decision\` for ${NON_DELIVERY_STATES.join(" and ")}, which assert the opposite.`,
+        `without merge evidence on the record goes through and answers with a nudge naming ` +
+        `what is missing — proof may ride the call (\`merge_proof\`, \`skip_proof\`) or be ` +
+        `recorded after it. \`to\` also selects which summary field is mandatory — \`shipped\` ` +
+        `for the states that delivered something, \`decision\` for ${NON_DELIVERY_STATES.join(" and ")}, ` +
+        `which assert the opposite.`,
     },
   ],
   // Two examples, not one, because the two halves of the `to` split need
