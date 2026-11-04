@@ -9,7 +9,7 @@ import { OvernightBlock } from "@/components/standup/OvernightBlock";
 import { ProjectsStrip } from "@/components/standup/ProjectsStrip";
 import { ErrorState } from "@/components/states/ErrorState";
 import type { StandupData, StandupLoadState } from "@/lib/standup/state";
-import { findAllByType, findOneByType } from "./helpers/react-element";
+import { findAllByType, findOneByType, walk } from "./helpers/react-element";
 
 function emptyData(): StandupData {
   return {
@@ -279,5 +279,51 @@ describe("InFlightBlock", () => {
     });
     const rows = findAllByType(tree, "li");
     expect(rows).toHaveLength(2);
+  });
+
+  it("names an agent holder in plain words and a person holder by name", () => {
+    const entry = (holderType: "agent" | "person", displayName: string, holderId: string) => ({
+      item: {
+        id: `item-${holderId}`,
+        title: `Item ${holderId}`,
+        headline: null,
+        kind: "task" as const,
+        state: "executing" as const,
+        priority: "P1" as const,
+        area: "core",
+        repo: null,
+        blockedOnPersonId: null,
+        blockedOnType: null,
+        blockedReason: null,
+        pauseReason: null,
+      },
+      column: "in_progress" as const,
+      assignments: [
+        {
+          holderId,
+          holderType,
+          displayName,
+          role: "builder" as const,
+          roleCustom: null,
+          liveness: "running" as const,
+          lastActive: "2026-08-18T10:00:00.000Z",
+        },
+      ],
+      trust: null,
+      subtasks: null,
+    });
+    const tree = InFlightBlock({
+      entries: [entry("agent", "crew-x7-builder", "agent-x7"), entry("person", "user-a", "p-a")],
+    });
+    const rendered = [...walk(tree)]
+      .flatMap((el) => {
+        const children = (el.props as { children?: unknown }).children;
+        return Array.isArray(children) ? children : [children];
+      })
+      .filter((child): child is string => typeof child === "string")
+      .join(" ");
+    expect(rendered).toContain("an agent");
+    expect(rendered).toContain("user-a");
+    expect(rendered).not.toContain("crew-x7-builder");
   });
 });

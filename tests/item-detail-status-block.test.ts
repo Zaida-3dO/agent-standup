@@ -182,6 +182,7 @@ describe("StatusBlock — ownership", () => {
     const element = render({
       assignments: [
         assignment({
+          holderType: "person",
           displayName: "Gary",
           role: "orchestrator",
           claimedAt: "2026-01-01T09:00:00.000Z",
@@ -229,10 +230,12 @@ describe("StatusBlock — ownership", () => {
     // IS held, by a session that will never let go, which is very often the
     // whole answer to "why is this stuck".
     const element = render({
-      assignments: [assignment({ displayName: "A gone agent", liveness: "dead" })],
+      assignments: [
+        assignment({ holderType: "person", displayName: "A gone holder", liveness: "dead" }),
+      ],
     });
     const text = textOf(element);
-    expect(text).toContain("A gone agent");
+    expect(text).toContain("A gone holder");
     expect(text).toContain("dead");
     expect(text).not.toContain("Nobody holds this");
   });
@@ -243,8 +246,20 @@ describe("StatusBlock — ownership", () => {
     // half the ownership.
     const element = render({
       assignments: [
-        assignment({ id: "a", holderId: "h-1", displayName: "First", role: "orchestrator" }),
-        assignment({ id: "b", holderId: "h-2", displayName: "Second", role: "builder" }),
+        assignment({
+          id: "a",
+          holderId: "h-1",
+          holderType: "person",
+          displayName: "First",
+          role: "orchestrator",
+        }),
+        assignment({
+          id: "b",
+          holderId: "h-2",
+          holderType: "person",
+          displayName: "Second",
+          role: "builder",
+        }),
       ],
     });
     const text = textOf(element);
@@ -285,7 +300,11 @@ describe("StatusBlock — liveness", () => {
 
   it("names the liveness in the accessible label, not colour alone", () => {
     const dot = oneWithProp(
-      render({ assignments: [assignment({ displayName: "Gary", liveness: "stalled" })] }),
+      render({
+        assignments: [
+          assignment({ holderType: "person", displayName: "Gary", liveness: "stalled" }),
+        ],
+      }),
       "data-liveness",
     );
     expect(propsOf(dot)["aria-label"]).toBe("Gary is stalled");
@@ -303,6 +322,7 @@ describe("StatusBlock — earlier holders", () => {
         assignment({
           id: "old-1",
           holderId: "h-old",
+          holderType: "person",
           displayName: "An earlier holder",
           releasedAt: "2026-01-01T08:00:00.000Z",
         }),
@@ -327,7 +347,12 @@ describe("StatusBlock — earlier holders", () => {
     // Rather than printing "released null", or silently omitting the holder.
     const element = render({
       previousHolders: [
-        assignment({ id: "old-1", displayName: "Nameless exit", releasedAt: null }),
+        assignment({
+          id: "old-1",
+          holderType: "person",
+          displayName: "Nameless exit",
+          releasedAt: null,
+        }),
       ],
     });
     const text = textOf(element);
@@ -645,5 +670,69 @@ describe("statusSummary — the shape the block is handed", () => {
     expect(Object.keys(summary).sort()).toEqual(
       ["ageMs", "blocked", "checkpoint", "holders", "loops", "previousHolders", "unowned"].sort(),
     );
+  });
+});
+
+describe("StatusBlock - holders in plain words", () => {
+  // The raw display name of an agent is a crew or session name, which means
+  // nothing to a person reading the page. Killed by rendering `displayName`.
+  const crewName = "crew-x7-builder";
+
+  it("shows an agent holder as 'an agent' and never prints its crew name", () => {
+    const element = render({
+      assignments: [
+        assignment({ holderType: "agent", displayName: crewName, holderId: "agent-x7" }),
+      ],
+      previousHolders: [
+        assignment({
+          id: "old",
+          holderType: "agent",
+          holderId: "agent-x7-old",
+          displayName: "session-old-x7",
+          releasedAt: "2026-01-01T08:00:00.000Z",
+        }),
+      ],
+    });
+    const text = textOf(element);
+    expect(text).toContain("an agent");
+    expect(text).not.toContain(crewName);
+    expect(text).not.toContain("session-old-x7");
+    expect(text).not.toContain("x7");
+  });
+
+  it("keeps the crew name out of the liveness label and the board-filter label", () => {
+    const element = render({
+      assignments: [
+        assignment({ holderType: "agent", displayName: crewName, holderId: "agent-x7" }),
+      ],
+    });
+    const dot = oneWithProp(element, "data-liveness");
+    expect(propsOf(dot)["aria-label"]).toBe("an agent is running");
+    const labels = [...walk(element)]
+      .map((el) => propsOf(el).label)
+      .filter(
+        (label): label is string =>
+          typeof label === "string" && label.startsWith("Filter the board by assignee"),
+      );
+    expect(labels).toEqual(["Filter the board by assignee: an agent"]);
+  });
+
+  it("still filters the board by the real holder id, which is not text anyone reads", () => {
+    const element = render({
+      assignments: [
+        assignment({ holderType: "agent", displayName: crewName, holderId: "agent-x7" }),
+      ],
+    });
+    const hrefs = [...walk(element)]
+      .map((el) => propsOf(el).href)
+      .filter((href): href is string => typeof href === "string");
+    expect(hrefs.some((href) => href.includes("agent-x7"))).toBe(true);
+  });
+
+  it("shows a person holder by name", () => {
+    const element = render({
+      assignments: [assignment({ holderType: "person", displayName: "user-a", holderId: "p-1" })],
+    });
+    expect(textOf(element)).toContain("user-a");
   });
 });

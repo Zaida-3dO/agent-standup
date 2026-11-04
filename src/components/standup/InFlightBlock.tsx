@@ -4,6 +4,7 @@
 import Link from "next/link";
 import type { BoardEntry, Liveness } from "@/lib/board/types";
 import { EmptyState } from "@/components/states";
+import { holderLabel } from "@/lib/design/holder-label";
 import styles from "./Standup.module.css";
 
 export interface InFlightBlockProps {
@@ -14,7 +15,8 @@ export interface InFlightBlockProps {
 interface InFlightRow {
   readonly itemId: string;
   readonly itemTitle: string;
-  readonly displayName: string;
+  /** Plain words: the person's name, or "an agent" - never a crew or session name. */
+  readonly holder: string;
   readonly role: string;
   readonly liveness: Liveness;
 }
@@ -26,7 +28,7 @@ function flatten(entries: readonly BoardEntry[]): InFlightRow[] {
       rows.push({
         itemId: entry.item.id,
         itemTitle: entry.item.title,
-        displayName: assignment.displayName,
+        holder: holderLabel(assignment),
         role: assignment.roleCustom ?? assignment.role.replace(/_/g, " "),
         liveness: assignment.liveness,
       });
@@ -76,7 +78,7 @@ export function InFlightBlock({ entries }: InFlightBlockProps) {
               />
               <div className={styles.inFlightMain}>
                 <span className={styles.holder}>
-                  {row.displayName}
+                  {row.holder}
                   <span className={styles.role}> · {row.role}</span>
                 </span>
                 <Link href={`/items/${encodeURIComponent(row.itemId)}`} className={styles.itemLink}>
