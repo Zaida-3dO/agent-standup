@@ -82,7 +82,7 @@ describe("fieldChangePayload", () => {
   it("records a summary, and neither value, for a large one", () => {
     const from = stringOfSerialisedSize(5000, "o");
     const to = stringOfSerialisedSize(5200, "n");
-    const payload = fieldChangePayload("body", from, to) as Record<string, unknown>;
+    const payload = fieldChangePayload("body", from, to) as unknown as Record<string, unknown>;
     expect(payload).toMatchObject({
       field: "body",
       summarised: true,

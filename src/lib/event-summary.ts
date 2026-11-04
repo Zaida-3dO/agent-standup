@@ -38,7 +38,7 @@ export const SUMMARY_MAX_KEY_LENGTH = 100;
 /** Hex characters kept from the SHA-256 digest. */
 export const SUMMARY_HASH_LENGTH = 12;
 
-export interface KeyChange {
+export type KeyChange = {
   readonly key: string;
   readonly change: "added" | "removed" | "changed";
   /** Serialised size of the value before the edit, `null` when the key was added. */
@@ -47,9 +47,9 @@ export interface KeyChange {
   readonly toSize: number | null;
   /** Hash of the value after the edit (before it, when the key was removed). */
   readonly hash: string;
-}
+};
 
-export interface FieldChangeSummary {
+export type FieldChangeSummary = {
   readonly field: string;
   readonly summarised: true;
   readonly changed: true;
@@ -59,14 +59,14 @@ export interface FieldChangeSummary {
   readonly toHash: string;
   readonly keys?: readonly KeyChange[];
   readonly keysOmitted?: number;
-}
+};
 
 /** What a `field_change` payload looks like when the values are small enough to keep. */
-export interface FieldChangeValues {
+export type FieldChangeValues = {
   readonly field: string;
   readonly from: unknown;
   readonly to: unknown;
-}
+};
 
 /** Length of the value as JSON; `undefined` counts as `null`, which is how it is stored. */
 export function serialisedSize(value: unknown): number {

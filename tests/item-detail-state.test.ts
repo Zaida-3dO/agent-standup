@@ -78,7 +78,10 @@ describe("fetchItemDetail", () => {
   });
 
   it("defaults the documents to none, and keeps the summaries the response carried", async () => {
-    const bare = await fetchItemDetail("item-1", stubFetch(200, { detail: { item: detailItem() } }));
+    const bare = await fetchItemDetail(
+      "item-1",
+      stubFetch(200, { detail: { item: detailItem() } }),
+    );
     expect(bare.documents).toEqual([]);
 
     const documents = [{ doc: "progress", entries: 3, bytes: 900 }];
