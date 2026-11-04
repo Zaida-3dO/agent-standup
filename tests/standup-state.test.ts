@@ -1,20 +1,22 @@
 // `fetchStandup` (src/lib/standup/state.ts): the Standup home's data load.
 //
-// Two things are pinned here, both born from the page going blank on a live
-// installation:
+// Three things are pinned here:
 //
-//   1. **The overnight report reads events slim.** It asks for `full` only
-//      with `types=state_change`, because the heavy shape on every event adds
-//      up to several times the response-size guard over a short page, and
-//      `GET /api/events` is refused (422).
-//   2. **The sections load and fail independently.** The reads used to share
-//      one `Promise.all`, so one refused read erased the whole page. Each
-//      section now settles on its own, and a failed one carries its own short
-//      message.
+//   1. **The finished-work read is slim and reads the tail.** It asks for the
+//      `merge` type only, with no `full` shape anywhere: the heavy shape on
+//      every event adds up to several times the response-size guard over a
+//      short page, and `GET /api/events` is then refused (422).
+//   2. **The sections load and fail independently.** One refused read never
+//      erases the page; each section settles on its own and a failed one
+//      carries its own short message.
+//   3. **The live columns and the projects list are read to their end.** The
+//      in-progress and waiting columns follow `nextCursor`, projects ask for
+//      the maximum page, and a read that was cut short says so ("capped"),
+//      so a count on the page is never a page-size artefact.
 //
 // Pure functions over a routed fake fetch: no DOM, no database.
 import { describe, expect, it, vi } from "vitest";
-import { fetchStandup, overlayStateChanges } from "@/lib/standup/state";
+import { COLUMN_MAX_PAGES, PROJECTS_LIMIT, fetchStandup } from "@/lib/standup/state";
 import type { SinceEvent } from "@/lib/since/types";
 
 const NOW = new Date("2026-08-19T09:00:00.000Z");
@@ -34,6 +36,7 @@ function event(overrides: Partial<SinceEvent> = {}): SinceEvent {
     id: "1",
     itemId: "item-a",
     itemTitle: "Item A",
+    project: null,
     ts: INSIDE,
     actorType: "agent",
     actorId: "agent-a",
@@ -63,18 +66,34 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+/** A board response for one column, in the shape `GET /api/board?column=` returns. */
+function boardBody(
+  column: string,
+  entries: readonly unknown[] = [],
+  extras: Record<string, unknown> = {},
+) {
+  return { board: { columns: { [column]: { entries, total: entries.length, ...extras } } } };
+}
+
+function boardEntry(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    item: { id, title: `Item ${id}`, kind: "task", state: "executing", project: null },
+    column: "in_progress",
+    assignments: [],
+    ...overrides,
+  };
+}
+
 interface Routes {
-  /** Answers a slim events read (no `full`). */
+  /** Answers the slim `types=merge` page read. */
   readonly slim?: () => Response;
-  /** Answers the `types=state_change` full read. */
-  readonly stateChanges?: () => Response;
   readonly costs?: () => Response;
-  readonly board?: () => Response;
+  /** Answer a read of the in-progress / waiting column; receives the request URL (for its cursor). */
+  readonly inProgress?: (url: URL) => Response;
+  readonly waiting?: (url: URL) => Response;
   readonly projects?: () => Response;
   readonly needsYou?: () => Response;
 }
-
-const DEFAULT_BOARD = { board: { columns: { in_progress: { entries: [] } } } };
 
 /** A fake `fetch` that routes by URL, recording every URL it was asked for. */
 function routedFetch(routes: Routes = {}) {
@@ -83,15 +102,18 @@ function routedFetch(routes: Routes = {}) {
     const url = String(input);
     urls.push(url);
     if (url.includes("/events")) {
-      // The probe for the newest id is the only read with a page size of one.
+      // The probe for the newest id is the only read with a page size of one
+      // and no `since`.
       if (/limit=1(&|$)/.test(url)) return json(feed([]));
-      if (url.includes("types=state_change")) {
-        return (routes.stateChanges ?? (() => json(feed([]))))();
-      }
       return (routes.slim ?? (() => json(feed([]))))();
     }
     if (url.includes("/costs")) return (routes.costs ?? (() => json({ groups: [] })))();
-    if (url.includes("/board")) return (routes.board ?? (() => json(DEFAULT_BOARD)))();
+    if (url.includes("/board")) {
+      const parsed = new URL(url, "http://localhost");
+      const column = parsed.searchParams.get("column") ?? "";
+      const route = column === "waiting" ? routes.waiting : routes.inProgress;
+      return (route ?? (() => json(boardBody(column))))(parsed);
+    }
     if (url.includes("/projects")) {
       return (routes.projects ?? (() => json({ projects: [], childlessCount: 0 })))();
     }
@@ -112,96 +134,31 @@ function loaded<T>(section: { status: string; data?: T; message?: string }): T {
   return section.data as T;
 }
 
-describe("the overnight report reads events slim", () => {
-  it("asks for full contents only on the state_change read", async () => {
-    const { urls } = await load();
-    const eventUrls = urls.filter((url) => url.includes("/events"));
-    const full = eventUrls.filter((url) => url.includes("full=true"));
-    expect(full).toHaveLength(1);
-    expect(full[0]).toContain("types=state_change");
-  });
+const eventUrls = (urls: readonly string[]) => urls.filter((url) => url.includes("/events"));
+const pageReads = (urls: readonly string[]) =>
+  eventUrls(urls).filter((url) => url.includes("limit=200"));
 
-  it("reads every other event without payload or body", async () => {
+describe("the finished-work read is slim", () => {
+  it("never asks for full contents, and reads the merge type only", async () => {
+    // Killed by re-adding a `full` read, or a second page type: the heavy
+    // shape is what once pushed `GET /api/events` over the response guard.
     const { urls } = await load();
-    const slim = urls.filter(
-      (url) => url.includes("/events") && url.includes("types=merge") && url.includes("limit=200"),
+    for (const url of eventUrls(urls)) expect(url).not.toContain("full");
+    const typed = pageReads(urls).map((url) =>
+      new URL(url, "http://localhost").searchParams.getAll("types").join(","),
     );
-    expect(slim).toHaveLength(1);
-    expect(slim[0]).not.toContain("full");
+    expect(typed).toEqual(["merge"]);
   });
 
-  it("starts both page reads from the same cursor, one span back from the newest id", async () => {
+  it("starts the page read one span back from the newest id", async () => {
     const { urls } = await load();
-    const pages = urls.filter((url) => url.includes("/events") && url.includes("limit=200"));
-    expect(pages).toHaveLength(2);
     // newestId is 2194 in the fake and the span is 2,000 ids.
-    for (const url of pages) expect(url).toContain("since=194");
+    const pages = pageReads(urls);
+    expect(pages).toHaveLength(1);
+    expect(pages[0]).toContain("since=194");
   });
 
-  it("counts only merge and state_change events, so it asks for only those two types", async () => {
-    // Killed by dropping the types filter from the merge read: any other
-    // event type could then fill the window.
-    const { urls } = await load();
-    const typed = urls
-      .filter((url) => url.includes("/events") && url.includes("limit=200"))
-      .map((url) => new URL(url, "http://localhost").searchParams.getAll("types").join(","));
-    expect(typed.sort()).toEqual(["merge", "state_change"]);
-  });
-
-  it("never asks for a full read without the type filter", async () => {
-    const { urls } = await load();
-    for (const url of urls.filter((u) => u.includes("full=true"))) {
-      expect(url).toContain("types=state_change");
-    }
-  });
-});
-
-describe("the overnight report still classifies moves into blocked", () => {
-  it("counts a state_change into blocked from the full read, and a merge from the slim one", async () => {
-    const { data } = await load({
-      slim: () =>
-        json(
-          feed([
-            event({ id: "10", type: "merge" }),
-            // Slim: the same state_change, with no payload to classify it by.
-            event({ id: "11", type: "state_change" }),
-            event({ id: "12", type: "state_change" }),
-            event({ id: "13", type: "note" }),
-          ]),
-        ),
-      stateChanges: () =>
-        json(
-          feed([
-            event({
-              id: "11",
-              type: "state_change",
-              payload: { from: "executing", to: "blocked" },
-            }),
-            event({
-              id: "12",
-              type: "state_change",
-              payload: { from: "planning", to: "executing" },
-            }),
-          ]),
-        ),
-    });
-    const report = loaded(data.overnight);
-    expect(report.merged).toHaveLength(1);
-    expect(report.newlyBlocked).toHaveLength(1);
-    expect(report.newlyBlocked[0]!.itemId).toBe("item-a");
-  });
-
-  it("would miss the block entirely if the state_change events stayed slim", async () => {
-    // The shape the slim read alone gives: a state_change with no payload can
-    // never match, so the count is 0. This pins WHY the second read exists.
-    const { data } = await load({
-      slim: () => json(feed([event({ id: "11", type: "state_change" })])),
-      stateChanges: () => json(feed([])),
-    });
-    expect(loaded(data.overnight).newlyBlocked).toHaveLength(0);
-  });
-
-  it("keeps the truncation flag honest: a slim page that stops short of the cutoff says so", async () => {
+  it("keeps the truncation flag honest: a page that stops short of the cutoff says so", async () => {
     const { data } = await load({
       slim: () => json(feed([event({ id: "10", type: "merge", ts: INSIDE })])),
     });
@@ -223,22 +180,43 @@ describe("the overnight report still classifies moves into blocked", () => {
     expect(report.eventsTruncated).toBe(false);
     expect(report.merged).toHaveLength(1);
   });
+
+  it("carries each merge's project through to the report", async () => {
+    const project = { id: "project-a", title: "Recipe box" };
+    const { data } = await load({
+      slim: () =>
+        json(
+          feed([
+            event({ id: "9", type: "note", ts: BEFORE }),
+            event({ id: "10", type: "merge", project }),
+          ]),
+        ),
+    });
+    expect(loaded(data.overnight).merged[0]!.project).toEqual(project);
+  });
 });
 
 describe("each section loads and fails on its own", () => {
-  it("shows every section when every read succeeds", async () => {
+  it("shows every section when every read succeeds, and records whose page it is", async () => {
     const { data } = await load();
-    expect(data.overnight.status).toBe("loaded");
-    expect(data.inFlight.status).toBe("loaded");
-    expect(data.projects.status).toBe("loaded");
-    expect(data.needsYou.status).toBe("loaded");
+    expect(data.viewerId).toBe("user-a");
+    for (const section of [
+      data.overnight,
+      data.inProgress,
+      data.waiting,
+      data.projects,
+      data.needsYou,
+    ]) {
+      expect(section.status).toBe("loaded");
+    }
   });
 
   it("keeps the other sections when the events read is refused (the live failure)", async () => {
     const { data } = await load({ slim: () => json({ error: "too large" }, 422) });
     expect(data.overnight.status).toBe("error");
     expect((data.overnight as { message: string }).message).toContain("422");
-    expect(data.inFlight.status).toBe("loaded");
+    expect(data.inProgress.status).toBe("loaded");
+    expect(data.waiting.status).toBe("loaded");
     expect(data.projects.status).toBe("loaded");
     expect(data.needsYou.status).toBe("loaded");
   });
@@ -252,23 +230,28 @@ describe("each section loads and fails on its own", () => {
     expect((data.projects as { message: string }).message).toContain("500");
     expect((data.needsYou as { message: string }).message).toContain("503");
     expect(data.overnight.status).toBe("loaded");
-    expect(data.inFlight.status).toBe("loaded");
+    expect(data.inProgress.status).toBe("loaded");
   });
 
-  it("fails the in-flight section alone when the board read fails", async () => {
-    const { data } = await load({ board: () => json({}, 500) });
-    expect(data.inFlight.status).toBe("error");
-    expect((data.inFlight as { message: string }).message).toContain("board");
+  it("fails one board column alone: the other column, and everything else, still load", async () => {
+    const { data } = await load({ waiting: () => json({}, 500) });
+    expect(data.waiting.status).toBe("error");
+    expect((data.waiting as { message: string }).message).toContain("board");
+    expect(data.inProgress.status).toBe("loaded");
     expect(data.overnight.status).toBe("loaded");
     expect(data.projects.status).toBe("loaded");
     expect(data.needsYou.status).toBe("loaded");
+
+    const other = await load({ inProgress: () => json({}, 500) });
+    expect(other.data.inProgress.status).toBe("error");
+    expect(other.data.waiting.status).toBe("loaded");
   });
 
   it("fails the projects section alone", async () => {
     const { data } = await load({ projects: () => json({}, 500) });
     expect(data.projects.status).toBe("error");
     expect(data.overnight.status).toBe("loaded");
-    expect(data.inFlight.status).toBe("loaded");
+    expect(data.inProgress.status).toBe("loaded");
     expect(data.needsYou.status).toBe("loaded");
   });
 
@@ -276,16 +259,7 @@ describe("each section loads and fails on its own", () => {
     const { data } = await load({ needsYou: () => json({}, 500) });
     expect(data.needsYou.status).toBe("error");
     expect(data.overnight.status).toBe("loaded");
-    expect(data.inFlight.status).toBe("loaded");
-    expect(data.projects.status).toBe("loaded");
-  });
-
-  it("fails the overnight section when the state_change read fails, rather than reporting 0 blocked", async () => {
-    const { data } = await load({
-      slim: () => json(feed([event({ id: "11", type: "state_change" })])),
-      stateChanges: () => json({}, 422),
-    });
-    expect(data.overnight.status).toBe("error");
+    expect(data.inProgress.status).toBe("loaded");
     expect(data.projects.status).toBe("loaded");
   });
 
@@ -297,31 +271,32 @@ describe("each section loads and fails on its own", () => {
         calls += 1;
         return json({}, 500);
       }
-      if (url.includes("/costs")) return json({ groups: [] });
-      if (url.includes("/board")) return json(DEFAULT_BOARD);
-      if (url.includes("/projects")) return json({ projects: [] });
-      return json({ items: [] });
+      return routedFetch().impl(input);
     });
     const data = await fetchStandup("user-a", NOW, impl as unknown as typeof fetch);
     expect(calls).toBeGreaterThan(0);
     expect(data.overnight.status).toBe("error");
-    expect(data.inFlight.status).toBe("loaded");
+    expect(data.inProgress.status).toBe("loaded");
   });
 
   it("resolves, never rejects, when every read fails", async () => {
     const impl = vi.fn(async () => json({}, 500));
     const data = await fetchStandup("user-a", NOW, impl as unknown as typeof fetch);
-    expect(data.overnight.status).toBe("error");
-    expect(data.inFlight.status).toBe("error");
-    expect(data.projects.status).toBe("error");
-    expect(data.needsYou.status).toBe("error");
+    for (const section of [
+      data.overnight,
+      data.inProgress,
+      data.waiting,
+      data.projects,
+      data.needsYou,
+    ]) {
+      expect(section.status).toBe("error");
+    }
   });
 
   it("turns a thrown non-Error into a plain message", async () => {
     const impl = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/projects")) throw "boom";
-      const routed = routedFetch().impl;
-      return routed(input);
+      return routedFetch().impl(input);
     });
     const data = await fetchStandup("user-a", NOW, impl as unknown as typeof fetch);
     expect(data.projects).toEqual({ status: "error", message: "Could not load the Standup home." });
@@ -338,8 +313,8 @@ describe("each section loads and fails on its own", () => {
   });
 });
 
-describe("the overnight section degrades figure by figure", () => {
-  it("keeps merged and blocked counts when only the costs read fails", async () => {
+describe("spend degrades without erasing the finished list", () => {
+  it("keeps the merges when only the costs read fails, and says spend is unavailable", async () => {
     const { data } = await load({
       costs: () => json({}, 500),
       slim: () => json(feed([event({ id: "10", type: "merge" })])),
@@ -356,95 +331,136 @@ describe("the overnight section degrades figure by figure", () => {
     expect(report.cost).toBeNull();
     expect(report.costUnavailable).toBe(false);
   });
+});
 
-  it("reports the live count as unknown, not zero, when the in-progress column failed", async () => {
-    const { data } = await load({
-      board: () => json({}, 500),
-      slim: () => json(feed([event({ id: "10", type: "merge" })])),
-    });
-    const report = loaded(data.overnight);
-    expect(report.deadOrStalledNow).toBeNull();
-    expect(report.merged).toHaveLength(1);
+describe("the live columns are read to their end", () => {
+  it("reads every level except projects, for both columns", async () => {
+    // Killed by dropping the level query: the board default is level 1 only,
+    // which hides an executing subtask and under-counts the agents.
+    const { urls } = await load();
+    const boardUrls = urls
+      .filter((url) => url.includes("/board"))
+      .map((url) => new URL(url, "http://localhost").searchParams);
+    expect(boardUrls.map((params) => params.get("column")).sort()).toEqual([
+      "in_progress",
+      "waiting",
+    ]);
+    for (const params of boardUrls) expect(params.get("level")).toBe("exclude:0");
   });
 
-  it("counts dead and stalled assignments from the in-progress column when it loaded", async () => {
-    const assignment = (liveness: string) => ({
-      holderId: "agent-a",
-      holderType: "agent",
-      displayName: "Agent A",
-      role: "builder",
-      roleCustom: null,
-      liveness,
-      lastActive: INSIDE,
+  it("follows nextCursor across pages and keeps every entry", async () => {
+    const { data, urls } = await load({
+      inProgress: (url) =>
+        url.searchParams.get("cursor") === "page-2"
+          ? json(boardBody("in_progress", [boardEntry("c")], { nextCursor: null }))
+          : json(
+              boardBody("in_progress", [boardEntry("a"), boardEntry("b")], {
+                nextCursor: "page-2",
+                total: 3,
+              }),
+            ),
     });
+    const column = loaded(data.inProgress);
+    expect(column.entries.map((entry) => entry.item.id)).toEqual(["a", "b", "c"]);
+    expect(column.capped).toBe(false);
+    expect(column.total).toBe(3);
+    const inProgressReads = urls.filter((url) => url.includes("column=in_progress"));
+    expect(inProgressReads).toHaveLength(2);
+    expect(inProgressReads[1]).toContain("cursor=page-2");
+  });
+
+  it("stops at the page cap and says the column is capped", async () => {
+    let pages = 0;
     const { data } = await load({
-      board: () =>
-        json({
-          board: {
-            columns: {
-              in_progress: {
-                entries: [
-                  {
-                    item: { id: "item-a", title: "Item A" },
-                    column: "in_progress",
-                    assignments: [assignment("dead"), assignment("running"), assignment("stalled")],
-                  },
-                ],
-              },
-            },
-          },
-        }),
+      inProgress: () => {
+        pages += 1;
+        return json(
+          boardBody("in_progress", [boardEntry(`p${pages}`)], { nextCursor: `next-${pages}` }),
+        );
+      },
     });
-    expect(loaded(data.overnight).deadOrStalledNow).toBe(2);
-    expect(loaded(data.inFlight)).toHaveLength(1);
+    expect(pages).toBe(COLUMN_MAX_PAGES);
+    expect(loaded(data.inProgress).capped).toBe(true);
+    expect(loaded(data.inProgress).entries).toHaveLength(COLUMN_MAX_PAGES);
+  });
+
+  it("fails the column rather than under-counting when a later page fails", async () => {
+    const { data } = await load({
+      inProgress: (url) =>
+        url.searchParams.get("cursor") === null
+          ? json(boardBody("in_progress", [boardEntry("a")], { nextCursor: "page-2" }))
+          : json({}, 500),
+    });
+    expect(data.inProgress.status).toBe("error");
   });
 });
 
-describe("overlayStateChanges", () => {
-  it("prefers the full event over the slim one with the same id", () => {
-    const slim = [event({ id: "1", type: "state_change" }), event({ id: "2", type: "merge" })];
-    const full = [event({ id: "1", type: "state_change", payload: { to: "blocked" } })];
-    const merged = overlayStateChanges(slim, full);
-    expect(merged).toHaveLength(2);
-    expect(merged[0]!.payload).toEqual({ to: "blocked" });
-    expect(merged[1]).toBe(slim[1]);
+describe("the projects and needs-you reads", () => {
+  it("asks for the maximum page of projects, and passes nextCursor through only when present", async () => {
+    const full = await load({
+      projects: () => json({ projects: [], childlessCount: 0, nextCursor: "p-200" }),
+    });
+    expect(full.urls.find((url) => url.includes("/projects"))).toContain(`limit=${PROJECTS_LIMIT}`);
+    expect(PROJECTS_LIMIT).toBe(200);
+    expect(loaded(full.data.projects).nextCursor).toBe("p-200");
+
+    const end = await load({
+      projects: () => json({ projects: [], childlessCount: 0, nextCursor: null }),
+    });
+    expect(loaded(end.data.projects)).not.toHaveProperty("nextCursor");
   });
 
-  it("keeps a full state_change the slim page did not reach", () => {
-    const merged = overlayStateChanges(
-      [event({ id: "1", type: "merge" })],
-      [event({ id: "5", type: "state_change", payload: { to: "blocked" } })],
-    );
-    expect(merged.map((e) => e.id)).toEqual(["1", "5"]);
-  });
-
-  it("leaves a slim state_change alone when there is no full counterpart", () => {
-    const slim = [event({ id: "1", type: "state_change" })];
-    const merged = overlayStateChanges(slim, []);
-    expect(merged).toEqual(slim);
-    expect(merged[0]!.payload).toBeUndefined();
-  });
-
-  it("returns nothing for two empty reads, and does not mutate its inputs", () => {
-    expect(overlayStateChanges([], [])).toEqual([]);
-    const slim = [event({ id: "1" })];
-    overlayStateChanges(slim, [event({ id: "2" })]);
-    expect(slim).toHaveLength(1);
+  it("keeps the needs-you total beside the rows, and each row's project", async () => {
+    const project = { id: "project-a", title: "Recipe box" };
+    const { data } = await load({
+      needsYou: () =>
+        json({
+          items: [
+            {
+              id: "item-a",
+              title: "Item A",
+              headline: null,
+              project,
+              state: "plan_review",
+              reason: "plan_review",
+              blockedReason: null,
+              updatedAt: INSIDE,
+              mergeAuthority: "pre_approved",
+            },
+            {
+              id: "item-b",
+              title: "Item B",
+              headline: null,
+              state: "blocked",
+              reason: "blocked_on_you",
+              blockedReason: "Which one?",
+              updatedAt: INSIDE,
+              mergeAuthority: "pre_approved",
+            },
+          ],
+          total: 7,
+        }),
+    });
+    const read = loaded(data.needsYou);
+    expect(read.total).toBe(7);
+    expect(read.items).toHaveLength(2);
+    expect(read.items[0]!.project).toEqual(project);
+    // A response that predates the field has no project, which is null rather than undefined.
+    expect(read.items[1]!.project).toBeNull();
   });
 });
 
 // ── The overnight window ────────────────────────────────────────────────
 //
-// The report reads only the two types it counts, across a wide span of ledger
-// ids, so unrelated writes cannot push last night's merges out of it. These
-// cases run against a fake ledger that answers `since`, `limit`, `types` and
-// `full` the way the events route does, rather than a canned page.
+// The report reads only the type it counts, across a wide span of ledger ids,
+// so unrelated writes cannot push last night's merges out of it. These cases
+// run against a fake ledger that answers `since`, `limit` and `types` the way
+// the events route does, rather than a canned page.
 
 interface LedgerRow {
   id: number;
   type: string;
   ts: string;
-  payload?: Record<string, unknown>;
 }
 
 function ledgerFetch(rows: readonly LedgerRow[]) {
@@ -454,7 +470,9 @@ function ledgerFetch(rows: readonly LedgerRow[]) {
     const url = new URL(String(input), "http://localhost");
     if (!url.pathname.includes("/events")) {
       if (url.pathname.includes("/costs")) return json({ groups: [] });
-      if (url.pathname.includes("/board")) return json(DEFAULT_BOARD);
+      if (url.pathname.includes("/board")) {
+        return json(boardBody(url.searchParams.get("column") ?? ""));
+      }
       if (url.pathname.includes("/projects")) return json({ projects: [], childlessCount: 0 });
       return json({ items: [] });
     }
@@ -462,7 +480,6 @@ function ledgerFetch(rows: readonly LedgerRow[]) {
     const since = Number(url.searchParams.get("since") ?? "0");
     const limit = Number(url.searchParams.get("limit") ?? "50");
     const types = url.searchParams.getAll("types");
-    const full = url.searchParams.get("full") === "true";
     const matching = rows
       .filter((row) => row.id > since && (types.length === 0 || types.includes(row.type)))
       .slice(0, limit)
@@ -473,7 +490,6 @@ function ledgerFetch(rows: readonly LedgerRow[]) {
           ts: row.ts,
           itemId: `item-${row.id}`,
           itemTitle: `Item ${row.id}`,
-          ...(full && row.payload ? { payload: row.payload } : {}),
         }),
       );
     return json(feed(matching, { newestId: String(newest) }));
@@ -481,8 +497,8 @@ function ledgerFetch(rows: readonly LedgerRow[]) {
   return { impl: impl as unknown as typeof fetch, calls };
 }
 
-const eventCalls = (calls: readonly URL[], type: string) =>
-  calls.filter((url) => url.searchParams.getAll("types").includes(type));
+const mergeReads = (calls: readonly URL[]) =>
+  calls.filter((url) => url.searchParams.getAll("types").includes("merge"));
 
 describe("the overnight window", () => {
   it("still counts a merge followed by 60 unrelated events", async () => {
@@ -498,7 +514,7 @@ describe("the overnight window", () => {
     expect(report.merged.map((line) => line.itemId)).toEqual(["item-1001"]);
   });
 
-  it("is not truncated when the span reaches back past the cutoff, even with nothing of the counted types before it", async () => {
+  it("is not truncated when the span reaches back past the cutoff, even with nothing of the counted type before it", async () => {
     // The oldest merge is inside the window, but an older event of another
     // type shows the span began before the cutoff. Killed by judging coverage
     // by the oldest MATCHING event.
@@ -538,21 +554,23 @@ describe("the overnight window", () => {
     const { impl, calls } = ledgerFetch(rows);
     const report = loaded((await fetchStandup("user-a", NOW, impl)).overnight);
 
-    const mergeReads = eventCalls(calls, "merge");
-    expect(mergeReads).toHaveLength(2);
-    expect(mergeReads[0]!.searchParams.get("since")).toBe("0");
-    expect(mergeReads[1]!.searchParams.get("since")).toBe("201");
+    const reads = mergeReads(calls).filter((url) => url.searchParams.get("limit") === "200");
+    expect(reads).toHaveLength(2);
+    expect(reads[0]!.searchParams.get("since")).toBe("0");
+    expect(reads[1]!.searchParams.get("since")).toBe("201");
     expect(report.merged).toHaveLength(250);
     expect(report.eventsTruncated).toBe(false);
   });
 
-  it("stops at five pages and says the counts may be incomplete", async () => {
+  it("stops at five pages and says the count may be incomplete", async () => {
     const rows: LedgerRow[] = [{ id: 1, type: "note", ts: BEFORE }];
     for (let n = 0; n < 1300; n += 1) rows.push({ id: 2 + n, type: "merge", ts: INSIDE });
     const { impl, calls } = ledgerFetch(rows);
     const report = loaded((await fetchStandup("user-a", NOW, impl)).overnight);
 
-    expect(eventCalls(calls, "merge")).toHaveLength(5);
+    expect(mergeReads(calls).filter((url) => url.searchParams.get("limit") === "200")).toHaveLength(
+      5,
+    );
     expect(report.merged).toHaveLength(1000);
     expect(report.eventsTruncated).toBe(true);
   });
@@ -564,19 +582,6 @@ describe("the overnight window", () => {
     ];
     const { impl, calls } = ledgerFetch(rows);
     await fetchStandup("user-a", NOW, impl);
-    for (const type of ["merge", "state_change"]) {
-      expect(eventCalls(calls, type)[0]!.searchParams.get("since")).toBe("3001");
-    }
-  });
-
-  it("still classifies a move into blocked from the full state_change read", async () => {
-    const rows: LedgerRow[] = [
-      { id: 10, type: "note", ts: BEFORE },
-      { id: 11, type: "state_change", ts: INSIDE, payload: { from: "executing", to: "blocked" } },
-      { id: 12, type: "state_change", ts: INSIDE, payload: { from: "planning", to: "executing" } },
-    ];
-    const { impl } = ledgerFetch(rows);
-    const report = loaded((await fetchStandup("user-a", NOW, impl)).overnight);
-    expect(report.newlyBlocked.map((line) => line.itemId)).toEqual(["item-11"]);
+    expect(mergeReads(calls)[0]!.searchParams.get("since")).toBe("3001");
   });
 });

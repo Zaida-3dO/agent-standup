@@ -93,6 +93,7 @@ describe("fetchNeedsYou", () => {
           id: "plan-a",
           title: "A plan",
           headline: "waiting on you",
+          project: { id: "project-a", title: "Recipe box" },
           state: "plan_review",
           reason: "plan_review",
           blockedReason: "needs a decision",
@@ -110,6 +111,7 @@ describe("fetchNeedsYou", () => {
         id: "plan-a",
         title: "A plan",
         headline: "waiting on you",
+        project: { id: "project-a", title: "Recipe box" },
         state: "plan_review",
         reason: "plan_review",
         blockedReason: "needs a decision",
@@ -137,6 +139,8 @@ describe("fetchNeedsYou", () => {
       id: "old",
       needsVisualReview: false,
       tipCommitSha: null,
+      // Absent from an older response means no project, not an undefined field.
+      project: null,
     });
   });
 

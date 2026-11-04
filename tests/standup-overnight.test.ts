@@ -1,17 +1,17 @@
 // src/lib/standup/overnight.ts — the overnight report's derivation over an
-// events slice, a costs payload, and live assignments. Pure functions over
-// plain data, so these run with no DOM and no database.
+// events slice and a costs payload. Pure functions over plain data, so these
+// run with no DOM and no database.
 import { describe, expect, it } from "vitest";
 import { buildOvernightReport, defaultCutoff } from "@/lib/standup/overnight";
 import type { SinceEvent } from "@/lib/since/types";
 import type { CostsPayload } from "@/lib/costs/types";
-import type { BoardAssignment } from "@/lib/board/types";
 
 function event(overrides: Partial<SinceEvent> = {}): SinceEvent {
   return {
     id: "1",
     itemId: "item-a",
     itemTitle: "Item A",
+    project: null,
     ts: "2026-08-18T10:00:00.000Z",
     actorType: "agent",
     actorId: "builder-one",
@@ -28,104 +28,58 @@ function costs(overrides: Partial<CostsPayload> = {}): CostsPayload {
   return { groupBy: "stage", groups: [], truncated: false, unpricedModels: [], ...overrides };
 }
 
-function assignment(overrides: Partial<BoardAssignment> = {}): BoardAssignment {
-  return {
-    holderId: "builder-one",
-    holderType: "agent",
-    displayName: "Builder One",
-    role: "builder",
-    roleCustom: null,
-    liveness: "running",
-    lastActive: "2026-08-18T10:00:00.000Z",
-    ...overrides,
-  };
-}
-
 const SINCE = "2026-08-18T00:00:00.000Z";
 
 describe("buildOvernightReport", () => {
-  it("counts merge events and newly-blocked state_change events inside the window", () => {
+  it("lists merge events inside the window, with their project, and ignores every other type", () => {
     const events = [
-      event({ id: "1", type: "merge", ts: "2026-08-18T05:00:00.000Z" }),
       event({
-        id: "2",
-        type: "state_change",
-        payload: { from: "executing", to: "blocked" },
-        ts: "2026-08-18T06:00:00.000Z",
+        id: "1",
+        type: "merge",
+        ts: "2026-08-18T05:00:00.000Z",
+        project: { id: "project-a", title: "Recipe box" },
       }),
-      // Not a block — moved TO executing, not FROM it.
-      event({
-        id: "3",
-        type: "state_change",
-        payload: { from: "planning", to: "executing" },
-        ts: "2026-08-18T07:00:00.000Z",
-      }),
+      event({ id: "2", type: "state_change", ts: "2026-08-18T06:00:00.000Z" }),
+      event({ id: "3", type: "note", ts: "2026-08-18T07:00:00.000Z" }),
     ];
-    const report = buildOvernightReport(SINCE, events, costs(), []);
-    expect(report.merged).toHaveLength(1);
-    expect(report.newlyBlocked).toHaveLength(1);
+    const report = buildOvernightReport(SINCE, events, costs());
+    expect(report.merged).toEqual([
+      {
+        itemId: "item-a",
+        itemTitle: "Item A",
+        ts: "2026-08-18T05:00:00.000Z",
+        project: { id: "project-a", title: "Recipe box" },
+      },
+    ]);
   });
 
   it("excludes events before the cutoff", () => {
     const events = [event({ id: "1", type: "merge", ts: "2026-08-17T23:00:00.000Z" })];
-    const report = buildOvernightReport(SINCE, events, costs(), []);
+    const report = buildOvernightReport(SINCE, events, costs());
     expect(report.merged).toHaveLength(0);
   });
 
   it("includes an event exactly at the cutoff", () => {
     const events = [event({ id: "1", type: "merge", ts: SINCE })];
-    const report = buildOvernightReport(SINCE, events, costs(), []);
+    const report = buildOvernightReport(SINCE, events, costs());
     expect(report.merged).toHaveLength(1);
   });
 
-  it("counts dead and stalled assignments, and no others", () => {
-    const assignments = [
-      assignment({ liveness: "running" }),
-      assignment({ liveness: "stalled" }),
-      assignment({ liveness: "dead" }),
-      assignment({ liveness: "superseded" }),
-    ];
-    const report = buildOvernightReport(SINCE, [], costs(), assignments);
-    expect(report.deadOrStalledNow).toBe(2);
-  });
-
-  it("reports dead or stalled as unknown (null), not zero, when the live assignments were not read", () => {
-    const report = buildOvernightReport(SINCE, [], costs(), null);
-    expect(report.deadOrStalledNow).toBeNull();
-    // A genuinely empty list is a real zero, and stays distinct from unknown.
-    expect(buildOvernightReport(SINCE, [], costs(), []).deadOrStalledNow).toBe(0);
-  });
-
   it("flags spend as unavailable when the costs read was not made, and not when it simply priced nothing", () => {
-    const failed = buildOvernightReport(SINCE, [], null, []);
+    const failed = buildOvernightReport(SINCE, [], null);
     expect(failed.cost).toBeNull();
     expect(failed.costUnavailable).toBe(true);
 
-    const unpriced = buildOvernightReport(SINCE, [], costs(), []);
+    const unpriced = buildOvernightReport(SINCE, [], costs());
     expect(unpriced.cost).toBeNull();
     expect(unpriced.costUnavailable).toBe(false);
   });
 
-  it("still counts merges and blocks when costs and assignments were unavailable", () => {
-    const events = [
-      event({ id: "1", type: "merge", ts: "2026-08-18T05:00:00.000Z" }),
-      event({
-        id: "2",
-        type: "state_change",
-        payload: { from: "executing", to: "blocked" },
-        ts: "2026-08-18T06:00:00.000Z",
-      }),
-    ];
-    const report = buildOvernightReport(SINCE, events, null, null);
+  it("still lists merges when the costs read was unavailable", () => {
+    const events = [event({ id: "1", type: "merge", ts: "2026-08-18T05:00:00.000Z" })];
+    const report = buildOvernightReport(SINCE, events, null);
     expect(report.merged).toHaveLength(1);
-    expect(report.newlyBlocked).toHaveLength(1);
-  });
-
-  it("does not count a state_change that arrived slim (no payload) as a block", () => {
-    const slim = event({ id: "2", type: "state_change", ts: "2026-08-18T06:00:00.000Z" });
-    delete (slim as { payload?: unknown }).payload;
-    const report = buildOvernightReport(SINCE, [slim], costs(), []);
-    expect(report.newlyBlocked).toHaveLength(0);
+    expect(report.costUnavailable).toBe(true);
   });
 
   it("sums recomputed cost across groups", () => {
@@ -155,7 +109,7 @@ describe("buildOvernightReport", () => {
         },
       ],
     });
-    const report = buildOvernightReport(SINCE, [], payload, []);
+    const report = buildOvernightReport(SINCE, [], payload);
     expect(report.cost).toBe(4);
   });
 
@@ -175,7 +129,7 @@ describe("buildOvernightReport", () => {
         },
       ],
     });
-    const report = buildOvernightReport(SINCE, [], payload, []);
+    const report = buildOvernightReport(SINCE, [], payload);
     expect(report.cost).toBeNull();
   });
 
@@ -186,7 +140,7 @@ describe("buildOvernightReport", () => {
       event({ id: "1", ts: "2026-08-18T05:00:00.000Z" }),
       event({ id: "2", ts: "2026-08-18T06:00:00.000Z" }),
     ];
-    const report = buildOvernightReport(SINCE, events, costs(), []);
+    const report = buildOvernightReport(SINCE, events, costs());
     expect(report.eventsTruncated).toBe(true);
   });
 
@@ -195,7 +149,7 @@ describe("buildOvernightReport", () => {
     // reached the ledger's start: the slice still stops after the cutoff, so
     // events in the window may be missing.
     const events = [event({ id: "1", ts: "2026-08-18T05:00:00.000Z" })];
-    const report = buildOvernightReport(SINCE, events, costs(), []);
+    const report = buildOvernightReport(SINCE, events, costs());
     expect(report.eventsTruncated).toBe(true);
   });
 
@@ -206,10 +160,9 @@ describe("buildOvernightReport", () => {
     // ledger and returns nothing. Qualifying this flag with a page-size
     // comparison lets zero rows report `false`, so the report declares
     // itself complete while covering no events at all: a confident
-    // "0 merged, 0 blocked" over a window it never actually read.
-    const report = buildOvernightReport(SINCE, [], costs(), []);
+    // "0 merged" over a window it never actually read.
+    const report = buildOvernightReport(SINCE, [], costs());
     expect(report.merged).toHaveLength(0);
-    expect(report.newlyBlocked).toHaveLength(0);
     expect(report.eventsTruncated).toBe(true);
   });
 
@@ -218,7 +171,7 @@ describe("buildOvernightReport", () => {
       event({ id: "1", ts: "2026-08-17T23:00:00.000Z" }),
       event({ id: "2", ts: "2026-08-18T05:00:00.000Z" }),
     ];
-    const report = buildOvernightReport(SINCE, events, costs(), []);
+    const report = buildOvernightReport(SINCE, events, costs());
     expect(report.eventsTruncated).toBe(false);
   });
 });

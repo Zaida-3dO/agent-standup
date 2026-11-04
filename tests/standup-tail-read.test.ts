@@ -96,14 +96,16 @@ describe("the standup fetch reads the end of the ledger", () => {
     return urls.filter((u) => u.includes("/events"));
   }
 
+  /** The merge page read: the one that counts what finished. */
+  const mergeRead = (urls: readonly string[]) =>
+    urls.find((u) => u.includes("types=merge") && u.includes("limit=200"))!;
+
   it("probes for the newest id and then asks for the page before it", async () => {
     // Fails if the `since` cursor is dropped: without it the request carries
     // no `since` at all and the server returns the ledger's beginning.
     const feedUrls = await capturedFeedUrls(feedBody());
     expect(feedUrls.length).toBeGreaterThanOrEqual(2);
-    const heavy = feedUrls.find((u) => u.includes("full=true"));
-    expect(heavy, "the full read should exist").toBeDefined();
-    expect(heavy).toContain("since=194");
+    expect(mergeRead(feedUrls)).toContain("since=194");
   });
 
   it("derives the cursor from newestId and not from the visibility horizon", async () => {
@@ -112,21 +114,17 @@ describe("the standup fetch reads the end of the ledger", () => {
     // position ~13,400 rows past the end of the ledger, and the page would
     // come back empty while looking like a quiet night.
     const feedUrls = await capturedFeedUrls(feedBody());
-    const heavy = feedUrls.find((u) => u.includes("full=true"))!;
-    expect(heavy).toContain("since=194");
-    expect(heavy).not.toContain("since=28767");
-    // The slim page reads from the same place.
-    const slim = feedUrls.find((u) => u.includes("types=merge") && !u.includes("full=true"))!;
-    expect(slim).toContain("since=194");
+    const merges = mergeRead(feedUrls);
+    expect(merges).toContain("since=194");
+    expect(merges).not.toContain("since=28767");
+    // The page is slim: the heavy shape is what once blew the response guard.
+    expect(merges).not.toContain("full");
   });
 
   it("omits since rather than paging past the end when the ledger is empty", async () => {
     // A null `newestId` with a live horizon is the empty-ledger shape. The
     // read must fall back to unbounded rather than manufacturing a cursor.
     const feedUrls = await capturedFeedUrls(feedBody({ newestId: null }));
-    const heavy = feedUrls.find((u) => u.includes("full=true"))!;
-    expect(heavy).not.toContain("since=");
-    const slim = feedUrls.find((u) => u.includes("types=merge") && !u.includes("full=true"))!;
-    expect(slim).not.toContain("since=");
+    expect(mergeRead(feedUrls)).not.toContain("since=");
   });
 });

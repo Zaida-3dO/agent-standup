@@ -31,12 +31,15 @@ export function emptyProjects(): ProjectsPayload {
 export async function fetchProjects(
   options: {
     readonly includeCompleted?: boolean;
+    /** Page size; the server's default (50) when absent, its maximum is 200. */
+    readonly limit?: number;
     readonly fetchImpl?: typeof fetch;
   } = {},
 ): Promise<ProjectsPayload> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const query = new URLSearchParams();
   if (options.includeCompleted === true) query.set("includeCompleted", "true");
+  if (options.limit !== undefined) query.set("limit", String(options.limit));
   const suffix = query.toString() === "" ? "" : `?${query.toString()}`;
 
   const response = await fetchImpl(uiApiPath(`/api/projects${suffix}`));
@@ -46,6 +49,7 @@ export async function fetchProjects(
   const body = (await response.json()) as {
     projects?: readonly ProjectRollup[];
     childlessCount?: number;
+    nextCursor?: string | null;
   };
   const projects = body.projects ?? [];
   return {
@@ -54,6 +58,7 @@ export async function fetchProjects(
       typeof body.childlessCount === "number"
         ? body.childlessCount
         : projects.filter((project) => project.childless).length,
+    ...(typeof body.nextCursor === "string" ? { nextCursor: body.nextCursor } : {}),
   };
 }
 

@@ -43,6 +43,7 @@ interface RawNeedsYouRow {
   readonly id: string;
   readonly title: string;
   readonly headline: string | null;
+  readonly project?: { readonly id: string; readonly title: string } | null;
   readonly state: string;
   readonly reason: string;
   readonly blockedReason: string | null;
@@ -118,6 +119,9 @@ function toNeedsYouItem(row: RawNeedsYouRow): NeedsYouItem {
     id: row.id,
     title: row.title,
     headline: row.headline,
+    // Absent on a response from a server that predates the field: the row
+    // simply has no project, which is the honest reading.
+    project: row.project ?? null,
     state: row.state,
     reason: row.reason as NeedsYouReason,
     blockedReason: row.blockedReason,

@@ -67,4 +67,10 @@ export interface ProjectsPayload {
   readonly projects: readonly ProjectRollup[];
   /** How many of `projects` are childless — surfaced without the client re-counting. */
   readonly childlessCount: number;
+  /**
+   * Present only when the server says more projects exist than this page
+   * returned. A reader that must not under-count (the Standup home) shows
+   * "N+" when it is set, so a capped list never reads as the whole set.
+   */
+  readonly nextCursor?: string;
 }

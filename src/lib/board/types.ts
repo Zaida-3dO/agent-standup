@@ -47,6 +47,12 @@ export interface BoardItem {
   readonly headline: string | null;
   readonly kind: "project" | "task" | "subtask";
   /**
+   * ISO 8601 of the item's last change, when the read carries it. Optional
+   * because the board's slim item does not send it on every server: the
+   * Standup's Stuck rows show an age when it is here and none when it is not.
+   */
+  readonly updatedAt?: string;
+  /**
    * The item's own stored state. Present on a project too, where it is a
    * creation leftover and NOT the project's column — `get-board.ts` says so
    * outright, so the tone helpers below refuse to read it for a project.

@@ -1,43 +1,38 @@
-// The Standup home's load lifecycle — fetching the four blocks' data and
-// composing the overnight report, as plain functions. Split out for the
-// reason `@/lib/board/state.ts` is: this repo's harness runs
-// `environment: "node"` with no DOM.
+// The Standup home's load lifecycle: fetching the page's data as plain
+// functions. Split out for the reason `@/lib/board/state.ts` is: this repo's
+// harness runs `environment: "node"` with no DOM. What the page makes of the
+// data lives in `./view.ts`.
 import { fetchFeed } from "@/lib/since/state";
 import { fetchCosts } from "@/lib/costs/state";
 import { fetchBoardColumn } from "@/lib/board/state";
+import { emptyBoardQuery, type BoardQuery } from "@/lib/board/filters";
 import { fetchProjects } from "@/lib/projects/state";
 import { fetchNeedsYou } from "@/lib/needs-you/state";
 import type { NeedsYouItem } from "@/lib/needs-you/types";
 import type { ProjectsPayload } from "@/lib/projects/types";
-import type { BoardEntry } from "@/lib/board/types";
+import type { BoardColumnId, BoardEntry } from "@/lib/board/types";
 import type { SinceEvent } from "@/lib/since/types";
 import { buildOvernightReport, defaultCutoff, type OvernightReport } from "./overnight";
 
 /**
  * How the overnight report reads the ledger.
  *
- * **Only the types the report counts are read, across a wide span.** The
- * report counts `merge` and `state_change` events and nothing else, so those
- * are the only two it asks for (`types` is filtered on the server). Reading
- * "the last 50 events of any type" let one burst of unrelated writes (a
- * progress document patched a thousand times in a row, say) push last night's
- * merges out of the window; asking for the two counted types over a span of
- * `OVERNIGHT_SPAN_IDS` ledger ids does not care what else was written.
+ * **Only the `merge` type is read, across a wide span, and slim.** The page
+ * counts what finished and nothing else, so it asks the server for that one
+ * type (`types` is filtered server-side). Reading "the last 50 events of any
+ * type" let one burst of unrelated writes (a progress document patched a
+ * thousand times in a row, say) push last night's merges out of the window;
+ * asking for the one counted type over a span of `OVERNIGHT_SPAN_IDS` ledger
+ * ids does not care what else was written. The slim shape is about a hundred
+ * characters an event, which keeps the page far from the 200,000-character
+ * response guard (`response-size.ts`) that refuses an oversized read and
+ * blanks the section.
  *
- * **The two reads cost very different amounts per row.** The merge read is
- * slim (id, type, item, time: about a hundred characters an event), which is
- * all a merge needs. Only `state_change` events are read in full, because
- * `buildOvernightReport`'s `movedTo` needs `payload.to` to tell a move into
- * `blocked` from any other change. Reading every event in full is what this
- * avoids: full events can be several thousand characters each, so even a
- * short page of them can exceed the 200,000-character response guard
- * (`response-size.ts`), which refuses the read and blanks the section.
- *
- * Both reads start from the same cursor, `OVERNIGHT_SPAN_IDS` ids back from
- * the newest, and page forward in pages of `OVERNIGHT_PAGE_LIMIT`: while a
- * page comes back full, the next starts after its last id, up to
- * `OVERNIGHT_MAX_PAGES` pages, so the newest events are reached rather than
- * cut off. If the cap is hit the report says its counts may be incomplete.
+ * The read starts `OVERNIGHT_SPAN_IDS` ids back from the newest and pages
+ * forward in pages of `OVERNIGHT_PAGE_LIMIT`: while a page comes back full,
+ * the next starts after its last id, up to `OVERNIGHT_MAX_PAGES` pages, so the
+ * newest events are reached rather than cut off. If the cap is hit the
+ * report says its count may be incomplete.
  */
 const OVERNIGHT_SPAN_IDS = 2000;
 const OVERNIGHT_PAGE_LIMIT = 200;
@@ -89,13 +84,32 @@ export function tailCursor(newestId: string | null, limit: number): string | und
  */
 export type SectionState<T> = { status: "loaded"; data: T } | { status: "error"; message: string };
 
+/** A board column read to its end (or to the page cap), as the Standup reads it. */
+export interface ColumnRead {
+  readonly entries: readonly BoardEntry[];
+  /** The server's count of everything in the column; entries may be fewer when `capped`. */
+  readonly total: number;
+  /** True when the read stopped at `COLUMN_MAX_PAGES` with more still to come: counts are a floor. */
+  readonly capped: boolean;
+}
+
+/** The needs-you set: the rows (one bounded page) and the server's count of all of them. */
+export interface NeedsYouRead {
+  readonly items: readonly NeedsYouItem[];
+  readonly total: number;
+}
+
 export interface StandupData {
+  /** Whose page this is; the view tells "blocked on you" from "blocked on someone else" by it. */
+  readonly viewerId: string | null;
+  /** What finished since the cutoff, and the spend over the same window. */
   readonly overnight: SectionState<OvernightReport>;
-  /** Every in-progress entry, live assignments included: "in flight now". */
-  readonly inFlight: SectionState<readonly BoardEntry[]>;
+  /** Every in-progress entry at any depth below a project: live work and stopped agents. */
+  readonly inProgress: SectionState<ColumnRead>;
+  /** Every paused or blocked entry: the stuck list is read from here. */
+  readonly waiting: SectionState<ColumnRead>;
   readonly projects: SectionState<ProjectsPayload>;
-  /** The full needs-you set, unsorted; the Standup view takes the count and the top few. */
-  readonly needsYou: SectionState<readonly NeedsYouItem[]>;
+  readonly needsYou: SectionState<NeedsYouRead>;
 }
 
 export type StandupLoadState =
@@ -103,30 +117,7 @@ export type StandupLoadState =
   | { status: "error"; message: string }
   | { status: "loaded"; data: StandupData };
 
-/**
- * Lays the full `state_change` events over the slim slice.
- *
- * The slim slice is the report's view of the window (merges need nothing
- * more); the full read supplies `payload` for the one type that needs it. A
- * full event stands in for the slim one with the same id; a full event the slim
- * page did not reach (it is newer, since both start from the same cursor) is
- * kept rather than dropped. Nothing else is touched, so every event the slim
- * read returned is still there for the report to measure its window by.
- */
-export function overlayStateChanges(
-  slim: readonly SinceEvent[],
-  stateChanges: readonly SinceEvent[],
-): SinceEvent[] {
-  const fullById = new Map(stateChanges.map((event) => [event.id, event]));
-  const slimIds = new Set(slim.map((event) => event.id));
-  const merged = slim.map((event) => fullById.get(event.id) ?? event);
-  for (const event of stateChanges) {
-    if (!slimIds.has(event.id)) merged.push(event);
-  }
-  return merged;
-}
-
-/** What the overnight reads came back with. */
+/** What one filtered feed read came back with. */
 interface OvernightRead {
   readonly events: SinceEvent[];
   /** True when a read hit `OVERNIGHT_MAX_PAGES` still full: the newest events may be missing. */
@@ -144,7 +135,6 @@ async function readPages(
     personId: string | null;
     since: string | undefined;
     types: readonly string[];
-    full?: boolean;
   },
   fetchImpl: typeof fetch,
 ): Promise<OvernightRead> {
@@ -152,13 +142,7 @@ async function readPages(
   let since = base.since;
   for (let page = 1; page <= OVERNIGHT_MAX_PAGES; page += 1) {
     const result = await fetchFeed(
-      {
-        personId: base.personId,
-        limit: OVERNIGHT_PAGE_LIMIT,
-        since,
-        types: base.types,
-        ...(base.full ? { full: true } : {}),
-      },
+      { personId: base.personId, limit: OVERNIGHT_PAGE_LIMIT, since, types: base.types },
       fetchImpl,
     );
     events.push(...result.events);
@@ -169,22 +153,18 @@ async function readPages(
 }
 
 /**
- * The events the overnight report is built from: the merges, read slim, with
- * the `state_change` events read in full and laid over them.
+ * The events the overnight report is built from: the merges, read slim.
  *
  * Also reads the first event of the span, of any type, as an **anchor**. With
- * only two types filtered, a quiet span can hold no matching event old enough
- * to prove the read reached the cutoff, and the report would claim to be
- * incomplete on a perfectly quiet night. The anchor is the oldest event the
- * span holds, so its time answers "does this span reach back to the cutoff"
- * whatever the types in it. It is a real event, de-duplicated by id, so it
- * never counts twice.
+ * one type filtered, a quiet span can hold no merge old enough to prove the
+ * read reached the cutoff, and the report would claim to be incomplete on a
+ * perfectly quiet night. The anchor is the oldest event the span holds, so its
+ * time answers "does this span reach back to the cutoff" whatever the types in
+ * it. It is a real event, de-duplicated by id, so it never counts twice (and
+ * the report only counts it if it is itself a merge).
  *
- * Throws if any of its reads fail. That is deliberate: a missing
- * `state_change` read would leave moves into `blocked` unclassifiable, and a
- * report that quietly showed "0 newly blocked" for that reason would be the
- * confident wrong answer `tailCursor`'s notes warn about. The overnight
- * section shows its own error line instead.
+ * Throws if a read fails: the overnight section then shows its own error line
+ * rather than a confident "nothing finished".
  */
 async function fetchOvernightEvents(
   personId: string | null,
@@ -207,19 +187,65 @@ async function fetchOvernightEvents(
   const probe = await fetchFeed({ personId, limit: 1 }, fetchImpl);
   const tailStart = tailCursor(probe.newestId, OVERNIGHT_SPAN_IDS);
 
-  const [merges, stateChanges, anchor] = await Promise.all([
+  const [merges, anchor] = await Promise.all([
     readPages({ personId, since: tailStart, types: ["merge"] }, fetchImpl),
-    // `full` only for `state_change`: see `OVERNIGHT_SPAN_IDS`.
-    readPages({ personId, since: tailStart, types: ["state_change"], full: true }, fetchImpl),
     fetchFeed({ personId, limit: 1, since: tailStart }, fetchImpl),
   ]);
 
   const mergeIds = new Set(merges.events.map((event) => event.id));
-  const slim = [...merges.events, ...anchor.events.filter((event) => !mergeIds.has(event.id))];
   return {
-    events: overlayStateChanges(slim, stateChanges.events),
-    capped: merges.capped || stateChanges.capped,
+    events: [...merges.events, ...anchor.events.filter((event) => !mergeIds.has(event.id))],
+    capped: merges.capped,
   };
+}
+
+/**
+ * The board query for the two live columns: every level except projects.
+ *
+ * The board's default is level 1 only, which would hide an executing subtask
+ * under a task and so under-count the agents and the live work. A project row
+ * has no column of its own (it is computed from its subtree), so level 0 is
+ * excluded rather than filtered out later.
+ */
+const LIVE_COLUMN_QUERY: BoardQuery = {
+  ...emptyBoardQuery(),
+  filters: { level: { mode: "exclude", levels: [0] } },
+};
+
+/**
+ * How many pages of a column are followed before the read says it is capped.
+ * Enough for several hundred entries, so "6 agents" is not a page-size
+ * artefact, while still bounding the page's worst case.
+ */
+export const COLUMN_MAX_PAGES = 10;
+
+/** How many projects the rollup read asks for (the operation's maximum). */
+export const PROJECTS_LIMIT = 200;
+
+/**
+ * Reads one board column, following `nextCursor` until it runs out.
+ *
+ * Throws if any page fails: a half-read column would under-count with no sign
+ * of it, so the section shows its error line instead.
+ */
+async function readColumn(column: BoardColumnId, fetchImpl: typeof fetch): Promise<ColumnRead> {
+  const entries: BoardEntry[] = [];
+  let total = 0;
+  let cursor: string | undefined;
+  for (let page = 1; page <= COLUMN_MAX_PAGES; page += 1) {
+    const section = await fetchBoardColumn(column, {
+      fetchImpl,
+      query: LIVE_COLUMN_QUERY,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    entries.push(...section.entries);
+    if (page === 1) total = section.total;
+    if (!section.nextCursor) {
+      return { entries, total: Math.max(total, entries.length), capped: false };
+    }
+    cursor = section.nextCursor;
+  }
+  return { entries, total: Math.max(total, entries.length), capped: true };
 }
 
 /** Turns one settled read into the state of its section, mapping the value on success. */
@@ -232,23 +258,18 @@ function sectionOf<T, U>(result: PromiseSettledResult<T>, pick: (value: T) => U)
 /**
  * Fetches everything the Standup home renders, for one profile.
  *
- * Five reads in parallel: they are independent (an events slice, a costs
- * total, one board column, the projects rollup, the needs-you set, itself
- * three parallel reads inside `fetchNeedsYou`), so serialising them would
- * make first paint wait on the slowest for no benefit, matching
- * `fetchBoard`'s own reasoning for its four column reads.
+ * Six reads in parallel: they are independent (the merged events, a costs
+ * total, two board columns, the projects rollup and the needs-you set), so
+ * serialising them would make first paint wait on the slowest for no benefit.
  *
  * **They settle independently (`Promise.allSettled`), and this never
- * rejects.** The reads used to share one `Promise.all`, so the first failure
- * threw away the others and the page showed nothing but one error. Each
- * section now carries its own result, and a failed one is a short error line
- * in its own place while the rest render.
+ * rejects.** Each section carries its own result, and a failed one is a short
+ * error line in its own place while the rest render. `./view.ts` drops any
+ * sentence clause whose data failed rather than stating a zero for it.
  *
- * The overnight report is composed from three reads (events, costs, and the
- * in-progress column for its dead-or-stalled count). Events are essential to
- * it; costs and the in-progress column are not, so their failure degrades
- * just their own figure ("—" with a line saying why) rather than erasing the
- * merged and blocked counts.
+ * The overnight section is composed from two reads: events are essential to
+ * it and costs are not, so a failed costs read hides spend
+ * (`costUnavailable`) without erasing the finished list.
  */
 export async function fetchStandup(
   personId: string | null,
@@ -257,33 +278,33 @@ export async function fetchStandup(
 ): Promise<StandupData> {
   const since = defaultCutoff(now);
 
-  const [events, costs, inProgress, projects, needsYou] = await Promise.allSettled([
+  const [events, costs, inProgress, waiting, projects, needsYou] = await Promise.allSettled([
     fetchOvernightEvents(personId, fetchImpl),
     fetchCosts({ groupBy: "stage", since }, fetchImpl),
-    fetchBoardColumn("in_progress", { fetchImpl }),
-    fetchProjects({ fetchImpl }),
+    readColumn("in_progress", fetchImpl),
+    readColumn("waiting", fetchImpl),
+    fetchProjects({ limit: PROJECTS_LIMIT, fetchImpl }),
     fetchNeedsYou(personId, fetchImpl),
   ]);
 
   return {
+    viewerId: personId,
     overnight: sectionOf(events, ({ events: eventList, capped }) => {
       const report = buildOvernightReport(
         since,
         eventList,
         costs.status === "fulfilled" ? costs.value : null,
-        inProgress.status === "fulfilled"
-          ? inProgress.value.entries.flatMap((entry) => entry.assignments)
-          : null,
       );
-      // A capped read stopped before the newest events: the counts are a
+      // A capped read stopped before the newest events: the count is a
       // floor, which is what `eventsTruncated` says.
       return capped ? { ...report, eventsTruncated: true } : report;
     }),
-    inFlight: sectionOf(inProgress, (column) => column.entries),
+    inProgress: sectionOf(inProgress, (column) => column),
+    waiting: sectionOf(waiting, (column) => column),
     projects: sectionOf(projects, (payload) => payload),
-    // `fetchNeedsYou` returns the page and its `total` since T24; this screen
-    // renders the rows only, so it takes the items and leaves the count.
-    needsYou: sectionOf(needsYou, (page) => page.items),
+    // `fetchNeedsYou` returns the page and its `total`; the sentence and the
+    // panel's count read the total, the rows read the page.
+    needsYou: sectionOf(needsYou, (page) => ({ items: page.items, total: page.total })),
   };
 }
 
