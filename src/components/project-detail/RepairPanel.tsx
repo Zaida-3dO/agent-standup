@@ -105,9 +105,7 @@ export function RepairPanel({
 
       <div className={styles.repairForm}>
         <label className={styles.repairField}>
-          <span className={styles.repairLabel}>
-            Retype to a task under a project (its id)
-          </span>
+          <span className={styles.repairLabel}>Retype to a task under a project (its id)</span>
           <input
             className={styles.repairInput}
             type="text"

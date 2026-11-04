@@ -298,7 +298,7 @@ describe("RepairPanel — never offer a repair without its limit", () => {
       const summary = findAllByType(tree as never, "summary");
       expect(summary).toHaveLength(1);
       expect(textOf(summary[0] as never)).toBe("Turn this into a task");
-      // The old fault wording is gone, and the dead-end case is not styled as one.
+      // No fault wording, and the dead-end case is not styled as a warning.
       expect(textOf(tree)).not.toContain("This project has no work under it");
       expect(String(root.props.className)).not.toMatch(/deadend|suspect/i);
       expect(findAllByType(tree as never, "h2")).toHaveLength(0);
