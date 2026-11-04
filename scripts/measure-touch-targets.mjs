@@ -41,7 +41,7 @@ const controlUrl = arg("control");
 const widths = (arg("widths") ?? DEFAULT_WIDTHS.join(",")).split(",").map((w) => Number(w.trim()));
 // A selector that must match at least one element, or the run is treated as
 // having measured nothing. See `assertRendered`.
-const requireSelector = arg("require", "a[class*=projectStripTitle]");
+const requireSelector = arg("require", "a[class*=needsTitle], a[class*=card]");
 
 if (url === null) {
   console.error("Pass --url http://localhost:3100/ (see the header of this file).");

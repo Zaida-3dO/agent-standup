@@ -106,8 +106,8 @@ export function canDecide(item: NeedsYouItem): boolean {
  * is where the findings behind the decision are. A `blocked_on_you` row has
  * no review artifact to point at, so it links to the item.
  *
- * Exported and shared by both callers — `NeedsYouRow` and the digest's
- * `NeedsYouBlock` — so the same item links to the same place whether a
+ * Exported and shared by both callers — `NeedsYouRow` and the Standup
+ * home's Needs-you panel — so the same item links to the same place whether a
  * reader reaches it from the preview on `/` or from the full inbox.
  *
  * Deliberately its own rule rather than a reuse of `canDecide`: "where does

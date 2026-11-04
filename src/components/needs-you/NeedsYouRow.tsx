@@ -68,7 +68,7 @@ export function NeedsYouRow({
   // Every approval affordance links to the findings behind it. `#reviews`
   // is the Reviews tab's deep-linkable hash (`@/lib/item-detail/tabs`'s
   // `hashForTab`), read by the detail page on load. `linksToReviews` is
-  // shared with the digest's `NeedsYouBlock` so both send a reader to the
+  // shared with the Standup home's Needs-you panel so both send a reader to the
   // same place for the same item.
   const detailHref = linksToReviews(item) ? `${itemHref}#reviews` : itemHref;
   const decidable = canDecide(item);

@@ -144,6 +144,13 @@
   --accent-border: oklch(0.5 0.13 265);
   --focus-ring: oklch(0.75 0.15 265);
 
+  /* Faint washes behind the two attention panels on the Standup home: the
+     accent tint for "needs you", a red tint for "stuck". Each sits close to
+     the card surface so text on it keeps the card's contrast; the panel's
+     border, not the wash, carries the colour. */
+  --needs-wash: oklch(0.2 0.035 265);
+  --stuck-wash: oklch(0.195 0.03 25);
+
   /* The only shadow in the system. See the header. */
   --shadow-overlay: 0 16px 48px oklch(0 0 0 / 0.6);
 }
@@ -410,6 +417,11 @@
   --accent-bg: oklch(0.93 0.04 265);
   --accent-border: oklch(0.7 0.12 265);
   --focus-ring: oklch(0.55 0.18 265);
+
+  /* The same two washes, picked from the light end: near-white with a trace
+     of hue, so secondary and faint text keep at least 4.5:1 on them. */
+  --needs-wash: oklch(0.96 0.02 265);
+  --stuck-wash: oklch(0.96 0.02 25);
 
   --shadow-overlay: 0 16px 48px oklch(0.17 0.008 275 / 0.18);
 

@@ -1,10 +1,10 @@
 "use client";
 
-// The thin container for the Standup home (`/`): fetches the four blocks'
+// The thin container for the Standup home (`/`): fetches the page's sections'
 // data for the active profile and hands it to `StandupHomeView` as plain
 // props — the same split `SinceLastVisit.tsx` follows and for the same
 // reason (see that file's header).
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useProfile } from "@/lib/profile/ProfileProvider";
 import {
   fetchStandup,
@@ -37,6 +37,14 @@ export function StandupHome() {
    */
   const [now, setNow] = useState(0);
 
+  // "Try again" re-runs the whole load: bumping this re-fires the effect below.
+  // The page's sections are read together, so one retry refreshes them all.
+  const [attempt, setAttempt] = useState(0);
+  const onRetry = useCallback(() => {
+    setLoaded(null);
+    setAttempt((n) => n + 1);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const loadedAt = new Date();
@@ -53,7 +61,7 @@ export function StandupHome() {
     return () => {
       cancelled = true;
     };
-  }, [personId]);
+  }, [personId, attempt]);
 
-  return <StandupHomeView loadState={loadState} now={now} />;
+  return <StandupHomeView loadState={loadState} now={now} onRetry={onRetry} />;
 }

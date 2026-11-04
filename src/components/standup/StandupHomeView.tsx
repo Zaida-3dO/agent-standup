@@ -1,93 +1,90 @@
-// `/` — the Standup home's presentational half. Load/error/loaded branching
-// plus the four blocks the task's brief names, exactly like
-// `SinceLastVisitView`'s split: hook-free and prop-driven so this repo's
-// DOM-free harness can call it directly (`tests/helpers/react-element.ts`).
-import type { SectionState, StandupLoadState } from "@/lib/standup/state";
-import { ErrorState, LoadingState } from "@/components/states";
-import { NeedsYouBlock } from "./NeedsYouBlock";
-import { InFlightBlock } from "./InFlightBlock";
-import { OvernightBlock } from "./OvernightBlock";
-import { ProjectsStrip } from "./ProjectsStrip";
+// `/` — the Standup home's presentational half. Load/error/loaded branching,
+// then the page laid out from a finished view-model. Hook-free and
+// prop-driven so this repo's DOM-free harness can call it directly
+// (`tests/helpers/react-element.ts`), the same split `SinceLastVisitView` uses.
+//
+// Every rule (which clause a failed read drops, what counts as stuck, how a
+// bar is cut) lives in `@/lib/standup/view`; the components here draw what
+// they are given and decide nothing.
+//
+// DOM order is reading order: the sentence, Needs you, Stuck, Projects, Done.
+// Desktop placement is done with CSS grid areas, so the keyboard path follows
+// importance and not the column a panel happens to sit in.
+import type { StandupLoadState } from "@/lib/standup/state";
+import { buildStandupView, type StandupView } from "@/lib/standup/view";
+import { ErrorState } from "@/components/states";
+import { BriefSentence } from "./BriefSentence";
+import { DoneSincePanel } from "./DoneSincePanel";
+import { NeedsYouPanel } from "./NeedsYouPanel";
+import { ProjectGrid } from "./ProjectGrid";
+import { StandupSkeleton } from "./StandupSkeleton";
+import { StuckPanel, showsStuck } from "./StuckPanel";
 import styles from "./Standup.module.css";
 
 export interface StandupHomeViewProps {
   readonly loadState: StandupLoadState;
   readonly now: number;
+  /** Re-runs the page load: behind every "Try again" on the page. */
+  readonly onRetry: () => void;
 }
 
-/**
- * A section whose own read failed: its title, then the short line saying why.
- * Sits in the grid where the section would have been, so the other three
- * blocks render exactly as they would have.
- */
-export function SectionError({
-  title,
-  message,
-}: {
-  readonly title: string;
-  readonly message: string;
-}) {
+export interface StandupPageProps {
+  readonly view: StandupView;
+  readonly onRetry: () => void;
+}
+
+/** The loaded page, drawn from a finished view-model. */
+export function StandupPage({ view, onRetry }: StandupPageProps) {
   return (
-    <section className={styles.block} aria-label={title} data-section-error="true">
-      <div className={styles.blockHead}>
-        <h2 className={styles.blockTitle}>{title}</h2>
+    <section className={styles.page} aria-label="Standup">
+      <header className={styles.head}>
+        <div className={styles.headMain}>
+          <h1 className={styles.date}>Standup · {view.dateLine}</h1>
+          <BriefSentence sentence={view.sentence} />
+        </div>
+        {view.spend !== null && <p className={styles.spend}>{view.spend}</p>}
+      </header>
+
+      <div className={styles.layout} data-has-stuck={showsStuck(view.stuck) ? "true" : "false"}>
+        <div className={styles.areaNeeds}>
+          <NeedsYouPanel view={view.needsYou} onRetry={onRetry} />
+        </div>
+        {showsStuck(view.stuck) && (
+          <div className={styles.areaStuck}>
+            <StuckPanel view={view.stuck} onRetry={onRetry} />
+          </div>
+        )}
+        <div className={styles.areaProjects}>
+          <ProjectGrid view={view.projects} onRetry={onRetry} />
+        </div>
+        <div className={styles.areaDone}>
+          <DoneSincePanel view={view.done} sinceLabel={view.sinceLabel} onRetry={onRetry} />
+        </div>
       </div>
-      <ErrorState message={message} />
     </section>
   );
 }
 
-/** Renders a loaded section with `render`, or its own error line. */
-function renderSection<T>(
-  title: string,
-  section: SectionState<T>,
-  render: (data: T) => React.ReactElement,
-): React.ReactElement {
-  return section.status === "loaded" ? (
-    render(section.data)
-  ) : (
-    <SectionError title={title} message={section.message} />
-  );
-}
-
-export function StandupHomeView({ loadState, now }: StandupHomeViewProps) {
-  if (loadState.status === "loading") {
-    return (
-      <section className={styles.page} aria-label="Standup">
-        <h1 className={styles.pageTitle}>Standup</h1>
-        <LoadingState rows={4} label="the standup digest" />
-      </section>
-    );
-  }
+export function StandupHomeView({ loadState, now, onRetry }: StandupHomeViewProps) {
+  if (loadState.status === "loading") return <StandupSkeleton />;
 
   if (loadState.status === "error") {
     return (
       <section className={styles.page} aria-label="Standup">
-        <h1 className={styles.pageTitle}>Standup</h1>
+        <header className={styles.head}>
+          <div className={styles.headMain}>
+            <h1 className={styles.date}>Standup</h1>
+          </div>
+        </header>
         <ErrorState message={loadState.message} centered />
+        <div className={styles.errorActions}>
+          <button type="button" className={styles.retry} onClick={onRetry}>
+            Try again
+          </button>
+        </div>
       </section>
     );
   }
 
-  const { data } = loadState;
-
-  return (
-    <section className={styles.page} aria-label="Standup">
-      <h1 className={styles.pageTitle}>Standup</h1>
-      <div className={styles.grid}>
-        {renderSection("Needs you", data.needsYou, (items) => (
-          <NeedsYouBlock items={items} now={now} />
-        ))}
-        {renderSection("In flight now", data.inFlight, (entries) => (
-          <InFlightBlock entries={entries} />
-        ))}
-        {renderSection("Last 24 hours", data.overnight, (report) => (
-          <OvernightBlock report={report} now={now} />
-        ))}
-        {renderSection("Projects at a glance", data.projects, (payload) => (
-          <ProjectsStrip payload={payload} />
-        ))}
-      </div>
-    </section>
-  );
+  return <StandupPage view={buildStandupView(loadState.data, now)} onRetry={onRetry} />;
 }
