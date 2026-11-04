@@ -28,7 +28,7 @@ import { FOLDED_INTO } from "@/lib/service/describe/reachability";
  * How many tools an MCP caller is offered.
  *
  * Reached by folding the scoring, project, session, create, loop, read,
- * record and ownership verbs into tools that take their verb as a field, and
+ * record, ownership and document verbs into tools that take their verb as a field, and
  * waiving the verbs themselves off MCP alone — every one of them stays
  * reachable on HTTP, on the command line, and through the tool it was folded
  * into.
@@ -40,7 +40,7 @@ import { FOLDED_INTO } from "@/lib/service/describe/reachability";
  * undone and the count stay right because something new arrived in the same
  * window, which is exactly the drift a typed figure hides.
  */
-const EXPECTED_MCP_TOOL_COUNT = 31;
+const EXPECTED_MCP_TOOL_COUNT = 32;
 
 /**
  * How many tool names the folds remove from the surface.
@@ -76,13 +76,13 @@ describe("the MCP tool surface", () => {
     // right and the surface less compact than it says — this is the
     // assertion that notices.
     //
-    // 31 operations are folded into 9 tools: the six loop verbs, three
+    // 34 operations are folded into 10 tools: the six loop verbs, three
     // creates, seven scoring verbs, three project verbs, two session verbs,
-    // one detail read, three bounded reads, three ownership verbs and four
-    // record verbs.
-    expect(FOLDED_INTO.size).toBe(31);
-    expect(new Set(FOLDED_INTO.values()).size).toBe(9);
-    expect(toolsSavedByFolding()).toBe(22);
+    // one detail read, three bounded reads, three ownership verbs, four
+    // record verbs and three document verbs.
+    expect(FOLDED_INTO.size).toBe(34);
+    expect(new Set(FOLDED_INTO.values()).size).toBe(10);
+    expect(toolsSavedByFolding()).toBe(24);
   });
 
   it("offers the same surface over both MCP transports", () => {

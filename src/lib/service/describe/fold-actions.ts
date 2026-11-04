@@ -73,6 +73,7 @@ import {
   OWNERSHIP_ACTION_FIELDS,
   FORWARDING as OWNERSHIP_FORWARDING,
 } from "../operations/ownership";
+import { DOC_ACTIONS, DOC_ACTION_FIELDS, FORWARDING as DOC_FORWARDING } from "../operations/doc";
 import {
   RECORD_ACTIONS,
   RECORD_ACTION_FIELDS,
@@ -221,6 +222,16 @@ export const FOLD_ACTIONS: ReadonlyMap<string, FoldActions> = new Map<string, Fo
         Object.entries(OWNERSHIP_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
       ),
       delegateSchema: delegateSchemaFrom(OWNERSHIP_FORWARDING),
+    },
+  ],
+  [
+    "doc",
+    {
+      actions: [...DOC_ACTIONS],
+      requiredByAction: Object.fromEntries(
+        Object.entries(DOC_ACTION_FIELDS).map(([action, spec]) => [action, spec.required]),
+      ),
+      delegateSchema: delegateSchemaFrom(DOC_FORWARDING),
     },
   ],
   [

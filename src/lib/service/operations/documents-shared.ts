@@ -100,6 +100,9 @@ export function byteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
+/** A serialised NUL: `\u0000` that is not the tail of an escaped backslash. */
+const NUL_IN_JSON = /(?<!\\)(?:\\\\)*\\u0000/;
+
 /**
  * Serialises a value for storage, refusing one that cannot be.
  *
@@ -122,8 +125,11 @@ export function serialiseValue(key: string, value: unknown): string {
     );
   }
   // Postgres `jsonb` cannot hold a NUL inside a string; left alone, the write
-  // would fail as a server fault rather than as the caller's input.
-  if (json.includes("\\u0000")) {
+  // would fail as a server fault rather than as the caller's input. A NUL
+  // serialises as the six characters \u0000 behind an even number of
+  // backslashes; a string that merely contains a backslash followed by
+  // "u0000" serialises with the backslash doubled, and is legitimate.
+  if (NUL_IN_JSON.test(json)) {
     throw new InvalidInputError(
       `The value for "${key}" contains a NUL character (\\u0000), which a document cannot store. Remove it or encode it differently.`,
       { fields: [`set.${key}`] },

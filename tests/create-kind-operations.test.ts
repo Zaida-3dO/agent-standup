@@ -691,7 +691,7 @@ describeIfDb("explicit create operations", () => {
       expect(payload.error.code).toBe("invalid_input");
     });
 
-    // The HTTP path is one of the ways the Inbox used to be filed into. Fails
+    // The HTTP path is one of the ways work could be filed into the Inbox. Fails
     // if the route resolves the shortcut again: a 201 and a new row.
     it("POST /api/tasks refuses the inbox shortcut with a 4xx and writes nothing", async () => {
       const rows = () =>

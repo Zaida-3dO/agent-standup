@@ -422,7 +422,7 @@ turn `GET /events?since=` into a twelve-way union, killing the query the ledger 
 | `escalation` | `{to_person}` — reason in `body` |
 | `note` | *(none — text in `body`)* |
 | `setting-change` | `{key, from: {set, value?}, to: {set, value?}, batch_id}` — `item_id` is null |
-| `doc-change` | `{doc, rev, previous_rev, keys: [{key, op, bytes}]}` — `op` is `created`, `updated` or `deleted`; sizes, **never values** (§8c) |
+| `doc-change` | `{doc, rev, previousRev, keys: [{key, op, bytes}], keysOmitted?}` — `op` is `created`, `updated` or `deleted`; sizes, **never values**; at most 25 keys, each name cut to 100 characters, with the count of the rest in `keysOmitted` (§8c) |
 
 **`setting-change` carries `{set}` rather than a bare `from`/`to` because JSON `null` is a legal
 setting value** (§17.2): notifications off, retention forever. Without the discriminator, *"cleared
@@ -1089,11 +1089,11 @@ Two tables, additive, both cascading with their item:
 one value per document every write is a read-modify-write of everything and two sessions overwrite
 each other; with a row per key a write names only the keys it changes.
 
-Operations (registered, exposed on MCP and HTTP; `doc_*` has no command-line verb):
+Operations (registered, and reachable on HTTP; an MCP caller reaches all three through the one `doc` tool, which takes `action: "get" | "list" | "patch"` and dispatches to them, so refusals are the same):
 
 | Operation | Input | Meaning |
 |---|---|---|
-| `doc_patch` | `{itemId, doc, set?: {key: value}, delete?: [key], ifRev?}` | Writes and removes some keys, in one transaction, and leaves every other key alone. At least one key, at most 100 between `set` and `delete`, none in both. Appends **one `doc-change` event** naming the keys, their sizes and the new revision. A patch that changes nothing (every value already stored, every deleted key absent) writes no row, bumps no revision and appends no event, and says `changed: false`. With `ifRev`, the patch is refused as a `conflict` (naming the current revision in `details`) unless the document is at exactly that revision — compared against the **whole document**, not the keys written, so a neighbour's write to another key is also a clash. Omit it to write without checking. |
+| `doc_patch` | `{itemId, doc, set?: {key: value}, delete?: [key], ifRev?}` | Writes and removes some keys, in one transaction, and leaves every other key alone. At least one key, at most 100 between `set` and `delete`, none in both. Appends **one `doc-change` event** naming the keys, their sizes and the new revision. A patch that changes nothing (every value already stored, every deleted key absent) writes no row, bumps no revision and appends no event, and says `changed: false`. `ifRev` means "the document revision I read at" and is checked **per key**: the patch is refused as a `conflict` if any key it names in `set` or `delete` holds an entry written after that revision (`details` carries `{currentRev, ifRev, keys}` with the clashing keys), or if `ifRev` is ahead of the document. Writes to other keys never clash, so parallel sessions that each own a key can all pass `ifRev`. **Known limit:** a key someone else *deleted* after that revision is not detected, because no tombstone is kept. Omit `ifRev` to write without checking. |
 | `doc_get` | `{itemId, doc, keys? \| prefix?, cursor?, limit?}` | Reads entries in byte order of key: the named `keys`, the keys under a literal `prefix`, or all. Returns the document's `rev` (0 if never written — not an error), `missing` (requested keys that hold nothing) and `nextCursor`. |
 | `doc_list` | `{parentId, doc, cursor?, limit?}` | One document across the **direct, non-archived children** of `parentId`: every entry, ordered by child then key, each tagged with its `itemId`. |
 
@@ -1747,7 +1747,7 @@ Deliberately small. MCP servers exposing sixty-odd tools are easy to find, and e
 | `complete` | Finish an item. **Separate from `transition` on purpose** — the required summary shape is in this tool's schema, where the agent can see it. |
 | `checkpoint` | Record what you tried, what you ruled out, what's next. |
 | `note` | Leave a timestamped remark on an item. |
-| `doc_patch` · `doc_get` · `doc_list` | **Documents (§8c).** Where anything big, technical or agent-only goes, instead of the title, headline, body or `customFields`: write some keys of a named document, read keys or a prefix of it, or read it across an item's children. Paged under the response limit; `ifRev` refuses a write made against a stale revision. |
+| `doc` | **Documents (§8c).** One tool, `action: "get" \| "list" \| "patch"` (over the operations `doc_get`, `doc_list`, `doc_patch`). Where anything big, technical or agent-only goes, instead of the title, headline, body or `customFields`: write some keys of a named document, read keys or a prefix of it, or read it across an item's children. Paged under the response limit; `ifRev` refuses a write to a key someone else has written since you read. |
 | `claim` | Take ownership of an item in a role. Atomic — two agents can't both win. Returns `crew_name` — the name the claiming session is now known by, assigned automatically (§9, §21). |
 | `release` | Give up ownership. |
 | `heartbeat` | Still alive. Unnecessary if your hook is flushing tool calls — that stamps it. Call it if you run no hook. |

@@ -77,7 +77,7 @@ export const docGet = defineOperation({
   name: "doc_get",
   kind: "read",
   summary:
-    "Reads entries of one of an item's documents: the `keys` named, the keys under a `prefix`, or all of them, in key order. Returns the document's `rev` (pass it as ifRev to doc_patch), `missing` for requested keys that are absent, and a `nextCursor` while more remain — a page can be shorter than `limit` and still have more. Documents are not part of get_item.",
+    "Reads entries of one of an item's documents: the `keys` named, the keys under a `prefix`, or all of them, in key order. Returns the document's `rev` (pass it as ifRev when patching), `missing` for requested keys that are absent, and a `nextCursor` while more remain — a page can be shorter than `limit` and still have more. Documents are not part of get_item.",
   contract: {
     rules: [
       {

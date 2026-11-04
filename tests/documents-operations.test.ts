@@ -173,6 +173,35 @@ describeIfDb("documents, against Postgres", () => {
       expect(JSON.stringify(events[0]!.payload).length).toBeLessThan(300);
     });
 
+    it("keeps the event small however many keys a patch names", async () => {
+      // 100 keys of 200 characters would be about 25,000 characters if listed
+      // in full. Killed by listing every key, or by not cutting the names.
+      const itemId = await seedItem();
+      const set: Record<string, number> = {};
+      for (let n = 0; n < MAX_DOC_KEYS_PER_PATCH; n += 1) {
+        set[`${String(n).padStart(3, "0")}${"k".repeat(197)}`] = n;
+      }
+      const result = await patch({ itemId, doc: "progress", set });
+
+      // The reply still lists every key, in full.
+      expect(result.keys).toHaveLength(MAX_DOC_KEYS_PER_PATCH);
+      expect(result.keys[0]!.key).toHaveLength(200);
+
+      const events = await docEvents(itemId);
+      const payload = events[0]!.payload as EventRow["payload"] & { keysOmitted?: number };
+      expect(JSON.stringify(payload).length).toBeLessThan(5000);
+      expect(payload.keys).toHaveLength(25);
+      expect(payload.keysOmitted).toBe(75);
+      expect(payload.keys.every((entry) => entry.key.length <= 100)).toBe(true);
+    });
+
+    it("says nothing about omitted keys when every key is listed", async () => {
+      const itemId = await seedItem();
+      await patch({ itemId, doc: "progress", set: { a: 1 } });
+      const payload = (await docEvents(itemId))[0]!.payload as Record<string, unknown>;
+      expect(payload).not.toHaveProperty("keysOmitted");
+    });
+
     it("never puts a value in the event, whatever the value", async () => {
       // The property the ledger's readers rely on. Killed by adding `value`
       // (or the whole patch) to the event payload, or the value to its body.
@@ -285,7 +314,7 @@ describeIfDb("documents, against Postgres", () => {
       expect(next.rev).toBe(2);
     });
 
-    it("refuses the second of two patches made against the same revision, and writes nothing", async () => {
+    it("refuses the second of two patches to the SAME key made against one revision, and writes nothing", async () => {
       // The reason `ifRev` exists. Killed by ignoring `ifRev`, or by checking
       // it only when the document already has entries.
       const itemId = await seedItem();
@@ -299,10 +328,11 @@ describeIfDb("documents, against Postgres", () => {
 
       expect(clash.code).toBe("conflict");
       expect(clash.fields).toEqual(["ifRev"]);
-      // Plain: names the revision it is at and what to do.
+      // Plain: names the revision it is at, the key, and what to do.
       expect(clash.message).toContain(`revision ${seen + 1}`);
-      expect(clash.message).toContain("doc_get");
-      expect(clash.details).toMatchObject({ currentRev: seen + 1, ifRev: seen });
+      expect(clash.message).toContain('"a"');
+      expect(clash.message).toContain("action get");
+      expect(clash.details).toEqual({ currentRev: seen + 1, ifRev: seen, keys: ["a"] });
 
       // The loser left no trace: its value, its other key, its event.
       const read = await get({ itemId, doc: "progress" });
@@ -313,37 +343,121 @@ describeIfDb("documents, against Postgres", () => {
       expect(await docEvents(itemId)).toHaveLength(2);
     });
 
-    it("refuses a stale revision for a key that is not even present yet", async () => {
-      // The comparison is against the whole document, so a neighbour's write
-      // to another key is a clash. Killed by comparing only the touched keys.
+    it("lets two patches to DIFFERENT keys against one revision both succeed", async () => {
+      // The reason the check is per key. Parallel sessions each own a session
+      // key; a whole-document comparison would refuse the second of them on
+      // every overlap. Killed by reverting to the whole-document comparison.
       const itemId = await seedItem();
-      await patch({ itemId, doc: "progress", set: { other: 1 } });
-      const clash = await rejection(patch({ itemId, doc: "progress", set: { mine: 1 }, ifRev: 0 }));
-      expect(clash.code).toBe("conflict");
+      await patch({ itemId, doc: "progress", set: { base: 1 } });
+      const seen = (await get({ itemId, doc: "progress" })).rev;
+
+      const first = await patch({ itemId, doc: "progress", set: { "session-a": 1 }, ifRev: seen });
+      const second = await patch({ itemId, doc: "progress", set: { "session-b": 1 }, ifRev: seen });
+
+      expect(first.rev).toBe(seen + 1);
+      expect(second.rev).toBe(seen + 2);
+      const read = await get({ itemId, doc: "progress" });
+      expect(read.rev).toBe(seen + 2);
+      expect(read.entries.map((entry) => entry.key)).toEqual(["base", "session-a", "session-b"]);
     });
 
-    it("treats a document nobody has written as revision 0, so any other ifRev clashes", async () => {
+    it("names every clashing key, and only those", async () => {
+      const itemId = await seedItem();
+      await patch({ itemId, doc: "progress", set: { a: 1, b: 1, c: 1 } });
+      const seen = (await get({ itemId, doc: "progress" })).rev;
+      await patch({ itemId, doc: "progress", set: { a: 2, c: 2 } });
+
+      const clash = await rejection(
+        patch({ itemId, doc: "progress", set: { a: 3, b: 3 }, delete: ["c"], ifRev: seen }),
+      );
+      expect(clash.code).toBe("conflict");
+      expect((clash.details as { keys: string[] }).keys).toEqual(["a", "c"]);
+      expect(clash.message).toContain('"a"');
+      expect(clash.message).toContain('"c"');
+      expect(clash.message).not.toContain('"b"');
+      // Nothing was written, not even the unclashed key.
+      const read = await get({ itemId, doc: "progress" });
+      expect(read.entries.map((entry) => [entry.key, entry.value])).toEqual([
+        ["a", 2],
+        ["b", 1],
+        ["c", 2],
+      ]);
+    });
+
+    it("refuses a delete of a key written after ifRev", async () => {
+      const itemId = await seedItem();
+      await patch({ itemId, doc: "progress", set: { a: 1, other: 1 } });
+      const seen = (await get({ itemId, doc: "progress" })).rev;
+      await patch({ itemId, doc: "progress", set: { a: 2 } });
+
+      const clash = await rejection(patch({ itemId, doc: "progress", delete: ["a"], ifRev: seen }));
+      expect(clash.code).toBe("conflict");
+      expect((clash.details as { keys: string[] }).keys).toEqual(["a"]);
+      expect((await get({ itemId, doc: "progress", keys: ["a"] })).entries).toHaveLength(1);
+
+      // A delete of an untouched key is fine under the same ifRev.
+      const ok = await patch({ itemId, doc: "progress", delete: ["other"], ifRev: seen });
+      expect(ok.changed).toBe(true);
+    });
+
+    it("refuses an ifRev ahead of the document's current revision", async () => {
+      const itemId = await seedItem();
+      await patch({ itemId, doc: "progress", set: { a: 1 } });
+      const clash = await rejection(
+        patch({ itemId, doc: "progress", set: { fresh: 1 }, ifRev: 5 }),
+      );
+      expect(clash.code).toBe("conflict");
+      expect(clash.fields).toEqual(["ifRev"]);
+      expect(clash.message).toContain("does not exist yet");
+      expect(clash.details).toEqual({ currentRev: 1, ifRev: 5, keys: [] });
+      expect((await get({ itemId, doc: "progress" })).rev).toBe(1);
+    });
+
+    it("does not clash on a key nobody has written, whatever else has moved", async () => {
+      // A neighbour's write to another key is not a clash. Killed by always
+      // refusing when the document has moved on.
+      const itemId = await seedItem();
+      await patch({ itemId, doc: "progress", set: { other: 1 } });
+      const ok = await patch({ itemId, doc: "progress", set: { mine: 1 }, ifRev: 0 });
+      expect(ok.rev).toBe(2);
+    });
+
+    it("treats a document nobody has written as revision 0, so a later ifRev is ahead of it", async () => {
       const itemId = await seedItem();
       const clash = await rejection(patch({ itemId, doc: "progress", set: { a: 1 }, ifRev: 3 }));
       expect(clash.code).toBe("conflict");
       expect(await entryCount(itemId)).toBe(0);
       expect(await docEvents(itemId)).toHaveLength(0);
+      // And revision 0 is accepted on it.
+      expect((await patch({ itemId, doc: "progress", set: { a: 1 }, ifRev: 0 })).rev).toBe(1);
     });
 
-    it("lets exactly one of two concurrent patches against the same revision win", async () => {
+    it("lets exactly one of two concurrent patches to the same key against one revision win", async () => {
       // The lock, not just the comparison. Killed by dropping `FOR UPDATE`:
-      // both would read revision 0 and both would write.
+      // both would read the same stored revision and both would write.
       const itemId = await seedItem();
+      await patch({ itemId, doc: "progress", set: { a: 0 } });
       const outcomes = await Promise.allSettled([
-        patch({ itemId, doc: "progress", set: { a: "one" }, ifRev: 0 }),
-        patch({ itemId, doc: "progress", set: { a: "two" }, ifRev: 0 }),
+        patch({ itemId, doc: "progress", set: { a: "one" }, ifRev: 1 }),
+        patch({ itemId, doc: "progress", set: { a: "two" }, ifRev: 1 }),
       ]);
       const won = outcomes.filter((outcome) => outcome.status === "fulfilled");
       const lost = outcomes.filter((outcome) => outcome.status === "rejected");
       expect(won).toHaveLength(1);
       expect(lost).toHaveLength(1);
       expect((lost[0] as PromiseRejectedResult).reason.code).toBe("conflict");
-      expect((await get({ itemId, doc: "progress" })).rev).toBe(1);
+      expect((await get({ itemId, doc: "progress" })).rev).toBe(2);
+    });
+
+    it("lets two concurrent patches to different keys against one revision both win", async () => {
+      const itemId = await seedItem();
+      await patch({ itemId, doc: "progress", set: { base: 0 } });
+      const outcomes = await Promise.allSettled([
+        patch({ itemId, doc: "progress", set: { a: "one" }, ifRev: 1 }),
+        patch({ itemId, doc: "progress", set: { b: "two" }, ifRev: 1 }),
+      ]);
+      expect(outcomes.map((outcome) => outcome.status)).toEqual(["fulfilled", "fulfilled"]);
+      expect((await get({ itemId, doc: "progress" })).rev).toBe(3);
     });
 
     it("applies concurrent patches without ifRev one after the other, losing none", async () => {
@@ -412,9 +526,23 @@ describeIfDb("documents, against Postgres", () => {
       const emptied = await get({ itemId, doc: "progress" });
       expect(emptied.entries).toEqual([]);
       expect(emptied.rev).toBe(4);
-      // A stale writer that read revision 2 is still refused.
-      const clash = await rejection(patch({ itemId, doc: "progress", set: { c: 1 }, ifRev: 2 }));
-      expect(clash.code).toBe("conflict");
+      // The revision a reader saw is still the document's own: one ahead of
+      // the real count would be accepted if the revision had dropped to 2.
+      const ahead = await rejection(patch({ itemId, doc: "progress", set: { c: 1 }, ifRev: 5 }));
+      expect(ahead.code).toBe("conflict");
+      expect((await patch({ itemId, doc: "progress", set: { c: 1 }, ifRev: 4 })).rev).toBe(5);
+    });
+
+    it("does not detect a key that someone else deleted after ifRev (a known limit: no tombstones)", async () => {
+      // Pinned so the limit is a stated behaviour, not an accident: a deleted
+      // entry leaves no row to carry a revision, so a stale writer re-creating
+      // the key is allowed.
+      const itemId = await seedItem();
+      await patch({ itemId, doc: "progress", set: { a: 1 } });
+      const seen = (await get({ itemId, doc: "progress" })).rev;
+      await patch({ itemId, doc: "progress", delete: ["a"] });
+      const result = await patch({ itemId, doc: "progress", set: { a: "again" }, ifRev: seen });
+      expect(result.keys).toEqual([{ key: "a", op: "created", bytes: 7 }]);
     });
   });
 
@@ -513,6 +641,25 @@ describeIfDb("documents, against Postgres", () => {
       expect(nul.code).toBe("invalid_input");
       expect(nul.fields).toEqual(["set.a"]);
       expect(await entryCount(itemId)).toBe(0);
+    });
+
+    it("accepts a string that merely contains a backslash followed by u0000, and refuses a NUL after a backslash", async () => {
+      // The six characters backslash-u-0-0-0-0 typed as text are legitimate;
+      // only a real NUL is not. Killed by testing the serialised JSON for
+      // the six characters wherever they appear.
+      const itemId = await seedItem();
+      const literal = String.raw`path\u0000end`;
+      const ok = await patch({ itemId, doc: "progress", set: { a: literal } });
+      expect(ok.changed).toBe(true);
+      expect((await get({ itemId, doc: "progress" })).entries[0]!.value).toBe(literal);
+
+      // A backslash and then a real NUL: the backslash is escaped and the NUL
+      // still follows it, so it is refused.
+      const nul = await rejection(
+        patch({ itemId, doc: "progress", set: { b: "back\\\u0000slash" } }),
+      );
+      expect(nul.code).toBe("invalid_input");
+      expect(nul.fields).toEqual(["set.b"]);
     });
 
     it("refuses an ifRev that is not a whole non-negative number, and unknown fields", async () => {

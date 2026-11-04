@@ -158,6 +158,7 @@ import { takeover } from "./operations/takeover";
 // one capability with three directions. Waived off MCP as three names and
 // reachable as one plus an action (`@/lib/adapters/waivers`).
 import { ownership } from "./operations/ownership";
+import { doc } from "./operations/doc";
 // The four ways an agent puts something on an item's record — a resume
 // point, a remark, a produced artifact, a capability gap — behind one tool.
 // One act seen four times, and the fold states the checkpoint/note
@@ -363,6 +364,7 @@ export const OPERATION_REGISTRY = {
   [sweep.name]: sweep,
   [takeover.name]: takeover,
   [ownership.name]: ownership,
+  [doc.name]: doc,
   [record.name]: record,
   [heartbeat.name]: heartbeat,
   [checkpoint.name]: checkpoint,

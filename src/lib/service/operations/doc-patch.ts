@@ -24,14 +24,29 @@
 // ── The revision, and what `ifRev` protects ─────────────────────────────
 //
 // Each document carries a revision that goes up by one for every patch that
-// changes it. A caller that read the document at revision N and passes
-// `ifRev: N` is refused if the document has moved on, with the current
-// revision in the refusal, instead of silently overwriting what another
-// session wrote in between. The comparison is against the whole document,
-// not the keys being written: a caller doing read-modify-write on a key
-// cannot tell a neighbour's unrelated write from a related one, and a false
-// clash costs a re-read where a missed one costs somebody's work. `ifRev` is
-// optional; a writer that owns its key outright simply omits it.
+// changes it, and each entry remembers the revision it was last written at.
+// `ifRev: N` means "the document revision I read at", and the check is **per
+// key**: the patch is refused if any key it names in `set` or `delete` holds
+// an entry written after revision N, because somebody wrote that key after
+// the caller read it. Writes to other keys never clash.
+//
+// Per key rather than per document because the writers are parallel
+// sessions that each own a small part of the whole (their own session key).
+// A whole-document comparison would refuse every one of them whenever any
+// other session had written anything since, so they would learn to leave
+// `ifRev` out and lose the protection it exists for: two sessions writing
+// the same thing clash instead of overwriting each other.
+//
+// Also refused: an `ifRev` ahead of the document's current revision, which
+// names a revision that does not exist yet and so was not read from this
+// document.
+//
+// **A known limit.** A key that someone else *deleted* after revision N is
+// not detected: a deleted entry leaves no row to carry a revision, and no
+// tombstone is kept. Re-creating a key somebody removed is therefore
+// allowed under `ifRev`.
+//
+// `ifRev` is optional; a writer that owns its key outright simply omits it.
 //
 // Two patches to one document are applied one after the other: the document
 // row is locked for the rest of the transaction before the revision is read,
@@ -45,6 +60,7 @@ import { ConflictError, InvalidInputError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { appendEvent } from "@/lib/events";
+import { SUMMARY_MAX_KEYS, SUMMARY_MAX_KEY_LENGTH } from "@/lib/event-summary";
 import { callerEventActor, liveAssignmentId } from "../items/event-attribution";
 import { resolveItemId } from "../items/resolve-id";
 import {
@@ -67,8 +83,10 @@ const inputSchema = z
     delete: z.array(docKeySchema).optional(),
     /**
      * The document revision this patch was made against, as `doc_get`
-     * reported it. The patch is refused if the document is at any other
-     * revision. Omit it to write without checking.
+     * reported it. The patch is refused if any key it names in `set` or
+     * `delete` was written after that revision, or if the revision is ahead
+     * of the document. Other keys are not compared. Omit it to write without
+     * checking.
      */
     ifRev: z.number().int().min(0).optional(),
   })
@@ -104,7 +122,7 @@ export const docPatch = defineOperation({
   name: "doc_patch",
   kind: "write",
   summary:
-    "Writes some keys of one of an item's documents: `set` {key: value} writes entries, `delete` [keys] removes them, and every other key is left alone. Documents are where anything big, technical or agent-only goes, instead of the title, headline, body or customFields. Pass `ifRev` (the rev doc_get returned) to be refused if someone else wrote since. Records one small event naming the keys and sizes, never the values.",
+    "Writes some keys of one of an item's documents: `set` {key: value} writes entries, `delete` [keys] removes them, and every other key is left alone. Documents are where anything big, technical or agent-only goes, instead of the title, headline, body or customFields. Pass `ifRev` (the rev a get returned) to be refused if someone else wrote since. Records one small event naming the keys and sizes, never the values.",
   contract: {
     rules: [
       {
@@ -117,7 +135,7 @@ export const docPatch = defineOperation({
       },
       {
         fields: ["ifRev"],
-        rule: "When given, the patch is refused unless the document is at exactly that revision. A document nobody has written is at revision 0.",
+        rule: "When given, the patch is refused if any key it names in set or delete was written after that revision, or if the revision is ahead of the document. Writes to other keys never clash. A document nobody has written is at revision 0. Known limit: a key someone else deleted after that revision is not detected.",
       },
     ],
     example: { itemId: "0f8e3a52", doc: "progress", set: { meta: { title: "Plan" } }, ifRev: 0 },
@@ -183,10 +201,12 @@ export const docPatch = defineOperation({
     );
     const currentRev = Number(docRows[0]?.rev ?? 0);
 
-    if (input.ifRev !== undefined && input.ifRev !== currentRev) {
+    // A revision ahead of the document does not exist yet, so it was not
+    // read from this document.
+    if (input.ifRev !== undefined && input.ifRev > currentRev) {
       throw new ConflictError(
-        `The document "${input.doc}" on ${itemId} is at revision ${currentRev}, not ${input.ifRev}: it was written to after you read it. Read it again with doc_get and redo the patch against that revision.`,
-        { fields: ["ifRev"], details: { currentRev, ifRev: input.ifRev } },
+        `The document "${input.doc}" on ${itemId} is at revision ${currentRev}, so revision ${input.ifRev} does not exist yet. Read it with the doc tool (action get) and pass the \`rev\` it returns as ifRev.`,
+        { fields: ["ifRev"], details: { currentRev, ifRev: input.ifRev, keys: [] } },
       );
     }
 
@@ -194,8 +214,10 @@ export const docPatch = defineOperation({
     // value" means what jsonb says it means (key order and spacing in the
     // sent JSON are not differences).
     const existing = serialised.length
-      ? await ctx.db.$queryRawUnsafe<{ key: string; exists: boolean; same: boolean }[]>(
-          `SELECT s."key", (e."key" IS NOT NULL) AS "exists",
+      ? await ctx.db.$queryRawUnsafe<
+          { key: string; exists: boolean; same: boolean; rev: number | null }[]
+        >(
+          `SELECT s."key", (e."key" IS NOT NULL) AS "exists", e."rev" AS "rev",
                   COALESCE(e."value" = s."value"::jsonb, false) AS "same"
            FROM unnest($3::text[], $4::text[]) AS s("key", "value")
            LEFT JOIN "ItemDocEntry" e
@@ -208,14 +230,34 @@ export const docPatch = defineOperation({
       : [];
     const existingByKey = new Map(existing.map((row) => [row.key, row]));
     const toDelete = deleteKeys.length
-      ? await ctx.db.$queryRawUnsafe<{ key: string; bytes: number }[]>(
-          `SELECT "key", octet_length("value"::text) AS "bytes" FROM "ItemDocEntry"
+      ? await ctx.db.$queryRawUnsafe<{ key: string; bytes: number; rev: number }[]>(
+          `SELECT "key", "rev", octet_length("value"::text) AS "bytes" FROM "ItemDocEntry"
            WHERE "itemId" = $1 AND "doc" = $2 AND "key" = ANY($3::text[])`,
           itemId,
           input.doc,
           deleteKeys,
         )
       : [];
+
+    // The per-key `ifRev` check, from the rows just read under the lock: a
+    // named key whose stored entry was written after the revision the caller
+    // read at has been written by somebody else since.
+    if (input.ifRev !== undefined) {
+      const ifRev = input.ifRev;
+      const clashing = [
+        ...existing.filter((row) => row.exists && Number(row.rev) > ifRev).map((row) => row.key),
+        ...toDelete.filter((row) => Number(row.rev) > ifRev).map((row) => row.key),
+      ];
+      if (clashing.length > 0) {
+        const shown = clashing.slice(0, 10).map((key) => `"${key}"`);
+        const more =
+          clashing.length > shown.length ? ` and ${clashing.length - shown.length} more` : "";
+        throw new ConflictError(
+          `The document "${input.doc}" on ${itemId} is at revision ${currentRev}, and ${clashing.length === 1 ? "the key" : "the keys"} ${shown.join(", ")}${more} ${clashing.length === 1 ? "was" : "were"} written after revision ${ifRev}, which is when you read: someone else wrote ${clashing.length === 1 ? "it" : "them"} since. Nothing was written. Read ${clashing.length === 1 ? "it" : "them"} again with the doc tool (action get) and redo the patch against the revision it returns.`,
+          { fields: ["ifRev"], details: { currentRev, ifRev, keys: clashing } },
+        );
+      }
+    }
 
     const changes: DocKeyChange[] = [];
     const writes: { key: string; json: string }[] = [];
@@ -269,13 +311,27 @@ export const docPatch = defineOperation({
     }
 
     // The event names keys and sizes. It never carries a value: that is the
-    // property the ledger's readers rely on, and the one a test pins.
+    // property the ledger's readers rely on, and the one a test pins. It is
+    // also kept small: at most `SUMMARY_MAX_KEYS` keys, each cut to
+    // `SUMMARY_MAX_KEY_LENGTH` characters, with the count of the rest in
+    // `keysOmitted`. The reply to the caller still lists every key.
     const event = await appendEvent(ctx.db, {
       itemId,
       actor: callerEventActor(ctx.caller),
       assignmentId: await liveAssignmentId(ctx.db, itemId, ctx.caller),
       type: "doc_change",
-      payload: { doc: input.doc, rev, previousRev: currentRev, keys: changes },
+      payload: {
+        doc: input.doc,
+        rev,
+        previousRev: currentRev,
+        keys: changes.slice(0, SUMMARY_MAX_KEYS).map((change) => ({
+          ...change,
+          key: change.key.slice(0, SUMMARY_MAX_KEY_LENGTH),
+        })),
+        ...(changes.length > SUMMARY_MAX_KEYS
+          ? { keysOmitted: changes.length - SUMMARY_MAX_KEYS }
+          : {}),
+      },
     });
 
     return {
