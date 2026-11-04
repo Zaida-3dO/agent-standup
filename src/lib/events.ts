@@ -10,6 +10,7 @@
 // `docs/plans/SCHEMA.md` §3 and `src/lib/service/context.ts`.
 import type { TransactionHandle } from "./service/context";
 import { insertEventRow, type EventFields } from "./events-insert";
+import { fieldChangePayload } from "./event-summary";
 
 export type { ActorType, AppendedEvent, EventActor, EventType } from "./events-insert";
 import type { ActorType, AppendedEvent, EventActor, EventType } from "./events-insert";
@@ -84,6 +85,13 @@ export async function appendEvent(
  * assumes primitives only, and a shallow reference comparison would treat
  * two structurally identical objects as "changed" on every call.
  *
+ * **A large value is summarised, not copied.** When either side serialises to
+ * more than `FIELD_CHANGE_INLINE_LIMIT` characters the payload records that the
+ * field changed, both sizes and a short hash of each side (plus the changed
+ * keys of an object-valued field) instead of `from`/`to` — see
+ * `event-summary.ts`. Every writer of a field change goes through here, so this
+ * is the one place the limit has to hold. Small values keep `{field, from, to}`.
+ *
  * Returns the rows actually written, so a caller that wants to know whether
  * anything changed (e.g. to skip bumping `updatedAt`) doesn't have to
  * recompute the diff itself.
@@ -111,7 +119,7 @@ export async function recordFieldChanges(
         actor: args.actor,
         assignmentId: args.assignmentId,
         type: "field_change",
-        payload: { field, from: args.before[field] ?? null, to: args.after[field] ?? null },
+        payload: fieldChangePayload(field, args.before[field] ?? null, args.after[field] ?? null),
       }),
     );
   }
