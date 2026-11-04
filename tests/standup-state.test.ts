@@ -124,17 +124,28 @@ describe("the overnight report reads events slim", () => {
   it("reads every other event without payload or body", async () => {
     const { urls } = await load();
     const slim = urls.filter(
-      (url) => url.includes("/events") && !url.includes("types=") && url.includes("limit=50"),
+      (url) => url.includes("/events") && url.includes("types=merge") && url.includes("limit=200"),
     );
     expect(slim).toHaveLength(1);
     expect(slim[0]).not.toContain("full");
   });
 
-  it("starts both page reads from the same cursor, one page back from the newest id", async () => {
+  it("starts both page reads from the same cursor, one span back from the newest id", async () => {
     const { urls } = await load();
-    const pages = urls.filter((url) => url.includes("/events") && url.includes("limit=50"));
+    const pages = urls.filter((url) => url.includes("/events") && url.includes("limit=200"));
     expect(pages).toHaveLength(2);
-    for (const url of pages) expect(url).toContain("since=2144");
+    // newestId is 2194 in the fake and the span is 2,000 ids.
+    for (const url of pages) expect(url).toContain("since=194");
+  });
+
+  it("counts only merge and state_change events, so it asks for only those two types", async () => {
+    // Killed by dropping the types filter from the merge read: any other
+    // event type could then fill the window.
+    const { urls } = await load();
+    const typed = urls
+      .filter((url) => url.includes("/events") && url.includes("limit=200"))
+      .map((url) => new URL(url, "http://localhost").searchParams.getAll("types").join(","));
+    expect(typed.sort()).toEqual(["merge", "state_change"]);
   });
 
   it("never asks for a full read without the type filter", async () => {
@@ -419,5 +430,153 @@ describe("overlayStateChanges", () => {
     const slim = [event({ id: "1" })];
     overlayStateChanges(slim, [event({ id: "2" })]);
     expect(slim).toHaveLength(1);
+  });
+});
+
+// ── The overnight window ────────────────────────────────────────────────
+//
+// The report reads only the two types it counts, across a wide span of ledger
+// ids, so unrelated writes cannot push last night's merges out of it. These
+// cases run against a fake ledger that answers `since`, `limit`, `types` and
+// `full` the way the events route does, rather than a canned page.
+
+interface LedgerRow {
+  id: number;
+  type: string;
+  ts: string;
+  payload?: Record<string, unknown>;
+}
+
+function ledgerFetch(rows: readonly LedgerRow[]) {
+  const newest = rows.reduce((max, row) => Math.max(max, row.id), 0);
+  const calls: URL[] = [];
+  const impl = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "http://localhost");
+    if (!url.pathname.includes("/events")) {
+      if (url.pathname.includes("/costs")) return json({ groups: [] });
+      if (url.pathname.includes("/board")) return json(DEFAULT_BOARD);
+      if (url.pathname.includes("/projects")) return json({ projects: [], childlessCount: 0 });
+      return json({ items: [] });
+    }
+    calls.push(url);
+    const since = Number(url.searchParams.get("since") ?? "0");
+    const limit = Number(url.searchParams.get("limit") ?? "50");
+    const types = url.searchParams.getAll("types");
+    const full = url.searchParams.get("full") === "true";
+    const matching = rows
+      .filter((row) => row.id > since && (types.length === 0 || types.includes(row.type)))
+      .slice(0, limit)
+      .map((row) =>
+        event({
+          id: String(row.id),
+          type: row.type as SinceEvent["type"],
+          ts: row.ts,
+          itemId: `item-${row.id}`,
+          itemTitle: `Item ${row.id}`,
+          ...(full && row.payload ? { payload: row.payload } : {}),
+        }),
+      );
+    return json(feed(matching, { newestId: String(newest) }));
+  });
+  return { impl: impl as unknown as typeof fetch, calls };
+}
+
+const eventCalls = (calls: readonly URL[], type: string) =>
+  calls.filter((url) => url.searchParams.getAll("types").includes(type));
+
+describe("the overnight window", () => {
+  it("still counts a merge followed by 60 unrelated events", async () => {
+    // Killed by reading the last 50 events of any type: the 60 document
+    // writes would push the merge out of the window.
+    const rows: LedgerRow[] = [
+      { id: 1000, type: "note", ts: BEFORE },
+      { id: 1001, type: "merge", ts: INSIDE },
+    ];
+    for (let n = 0; n < 60; n += 1) rows.push({ id: 1002 + n, type: "doc_change", ts: INSIDE });
+    const { impl } = ledgerFetch(rows);
+    const report = loaded((await fetchStandup("user-a", NOW, impl)).overnight);
+    expect(report.merged.map((line) => line.itemId)).toEqual(["item-1001"]);
+  });
+
+  it("is not truncated when the span reaches back past the cutoff, even with nothing of the counted types before it", async () => {
+    // The oldest merge is inside the window, but an older event of another
+    // type shows the span began before the cutoff. Killed by judging coverage
+    // by the oldest MATCHING event.
+    const rows: LedgerRow[] = [
+      { id: 10, type: "note", ts: BEFORE },
+      { id: 11, type: "merge", ts: INSIDE },
+    ];
+    const { impl } = ledgerFetch(rows);
+    const report = loaded((await fetchStandup("user-a", NOW, impl)).overnight);
+    expect(report.eventsTruncated).toBe(false);
+    expect(report.merged).toHaveLength(1);
+  });
+
+  it("is truncated when the span starts inside the window", async () => {
+    const rows: LedgerRow[] = [{ id: 11, type: "merge", ts: INSIDE }];
+    const { impl } = ledgerFetch(rows);
+    const report = loaded((await fetchStandup("user-a", NOW, impl)).overnight);
+    expect(report.eventsTruncated).toBe(true);
+  });
+
+  it("does not count the anchor event twice when it is itself a merge", async () => {
+    const rows: LedgerRow[] = [
+      { id: 10, type: "merge", ts: BEFORE },
+      { id: 11, type: "merge", ts: INSIDE },
+    ];
+    const { impl } = ledgerFetch(rows);
+    const report = loaded((await fetchStandup("user-a", NOW, impl)).overnight);
+    expect(report.merged).toHaveLength(1);
+    expect(report.eventsTruncated).toBe(false);
+  });
+
+  it("follows a full page with another request, from its last id", async () => {
+    // 250 merges: one page of 200 is not the whole window. Killed by reading
+    // a single page.
+    const rows: LedgerRow[] = [{ id: 1, type: "note", ts: BEFORE }];
+    for (let n = 0; n < 250; n += 1) rows.push({ id: 2 + n, type: "merge", ts: INSIDE });
+    const { impl, calls } = ledgerFetch(rows);
+    const report = loaded((await fetchStandup("user-a", NOW, impl)).overnight);
+
+    const mergeReads = eventCalls(calls, "merge");
+    expect(mergeReads).toHaveLength(2);
+    expect(mergeReads[0]!.searchParams.get("since")).toBe("0");
+    expect(mergeReads[1]!.searchParams.get("since")).toBe("201");
+    expect(report.merged).toHaveLength(250);
+    expect(report.eventsTruncated).toBe(false);
+  });
+
+  it("stops at five pages and says the counts may be incomplete", async () => {
+    const rows: LedgerRow[] = [{ id: 1, type: "note", ts: BEFORE }];
+    for (let n = 0; n < 1300; n += 1) rows.push({ id: 2 + n, type: "merge", ts: INSIDE });
+    const { impl, calls } = ledgerFetch(rows);
+    const report = loaded((await fetchStandup("user-a", NOW, impl)).overnight);
+
+    expect(eventCalls(calls, "merge")).toHaveLength(5);
+    expect(report.merged).toHaveLength(1000);
+    expect(report.eventsTruncated).toBe(true);
+  });
+
+  it("starts the span 2,000 ids back from the newest id", async () => {
+    const rows: LedgerRow[] = [
+      { id: 5000, type: "note", ts: BEFORE },
+      { id: 5001, type: "merge", ts: INSIDE },
+    ];
+    const { impl, calls } = ledgerFetch(rows);
+    await fetchStandup("user-a", NOW, impl);
+    for (const type of ["merge", "state_change"]) {
+      expect(eventCalls(calls, type)[0]!.searchParams.get("since")).toBe("3001");
+    }
+  });
+
+  it("still classifies a move into blocked from the full state_change read", async () => {
+    const rows: LedgerRow[] = [
+      { id: 10, type: "note", ts: BEFORE },
+      { id: 11, type: "state_change", ts: INSIDE, payload: { from: "executing", to: "blocked" } },
+      { id: 12, type: "state_change", ts: INSIDE, payload: { from: "planning", to: "executing" } },
+    ];
+    const { impl } = ledgerFetch(rows);
+    const report = loaded((await fetchStandup("user-a", NOW, impl)).overnight);
+    expect(report.newlyBlocked.map((line) => line.itemId)).toEqual(["item-11"]);
   });
 });

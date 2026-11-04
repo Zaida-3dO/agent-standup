@@ -14,28 +14,34 @@ import type { SinceEvent } from "@/lib/since/types";
 import { buildOvernightReport, defaultCutoff, type OvernightReport } from "./overnight";
 
 /**
- * The events page size the overnight report reads.
+ * How the overnight report reads the ledger.
  *
- * **Two reads share it, and they cost very different amounts per row.** The
- * main read is slim (id, type, item, time: about a hundred characters an
- * event), which is all a merge needs. Only `state_change` events are read in
- * full, because `buildOvernightReport`'s `movedTo` needs `payload.to` to tell
- * a move into `blocked` from any other change, and that read is filtered on
- * the server (`types: ["state_change"]`), so it never pays the heavy shape for
- * the other kinds. Reading every event in full is what this avoids: full events
- * can be several thousand characters each, so even a short page of them can
- * exceed the 200,000-character response guard (`response-size.ts`), which
- * refuses the read and blanks the section.
+ * **Only the types the report counts are read, across a wide span.** The
+ * report counts `merge` and `state_change` events and nothing else, so those
+ * are the only two it asks for (`types` is filtered on the server). Reading
+ * "the last 50 events of any type" let one burst of unrelated writes (a
+ * progress document patched a thousand times in a row, say) push last night's
+ * merges out of the window; asking for the two counted types over a span of
+ * `OVERNIGHT_SPAN_IDS` ledger ids does not care what else was written.
  *
- * Both reads start from the same cursor and ask for the same number of rows,
- * so the full `state_change` read covers the window the slim read covers (or
- * a little past its end), never fewer of the recent ones. 50 is a page the
- * slim shape carries comfortably and a `state_change` payload (a from/to
- * pair) leaves far below the guard. Should an installation's payloads run
- * larger, the guard is still the backstop, and the failure is now confined to
- * the overnight section.
+ * **The two reads cost very different amounts per row.** The merge read is
+ * slim (id, type, item, time: about a hundred characters an event), which is
+ * all a merge needs. Only `state_change` events are read in full, because
+ * `buildOvernightReport`'s `movedTo` needs `payload.to` to tell a move into
+ * `blocked` from any other change. Reading every event in full is what this
+ * avoids: full events can be several thousand characters each, so even a
+ * short page of them can exceed the 200,000-character response guard
+ * (`response-size.ts`), which refuses the read and blanks the section.
+ *
+ * Both reads start from the same cursor, `OVERNIGHT_SPAN_IDS` ids back from
+ * the newest, and page forward in pages of `OVERNIGHT_PAGE_LIMIT`: while a
+ * page comes back full, the next starts after its last id, up to
+ * `OVERNIGHT_MAX_PAGES` pages, so the newest events are reached rather than
+ * cut off. If the cap is hit the report says its counts may be incomplete.
  */
-const OVERNIGHT_EVENTS_LIMIT = 50;
+const OVERNIGHT_SPAN_IDS = 2000;
+const OVERNIGHT_PAGE_LIMIT = 200;
+const OVERNIGHT_MAX_PAGES = 5;
 
 /**
  * The `since` cursor that lands a page of `limit` rows at the ledger's tail.
@@ -120,9 +126,59 @@ export function overlayStateChanges(
   return merged;
 }
 
+/** What the overnight reads came back with. */
+interface OvernightRead {
+  readonly events: SinceEvent[];
+  /** True when a read hit `OVERNIGHT_MAX_PAGES` still full: the newest events may be missing. */
+  readonly capped: boolean;
+}
+
 /**
- * The events the overnight report is built from: the ledger's tail read slim,
- * with the `state_change` events read in full and laid over it.
+ * Reads one filtered feed forward from `since`, a page at a time.
+ *
+ * Follows on from the last id of a full page, up to `OVERNIGHT_MAX_PAGES`
+ * pages. Returns whether the cap was hit with the last page still full.
+ */
+async function readPages(
+  base: {
+    personId: string | null;
+    since: string | undefined;
+    types: readonly string[];
+    full?: boolean;
+  },
+  fetchImpl: typeof fetch,
+): Promise<OvernightRead> {
+  const events: SinceEvent[] = [];
+  let since = base.since;
+  for (let page = 1; page <= OVERNIGHT_MAX_PAGES; page += 1) {
+    const result = await fetchFeed(
+      {
+        personId: base.personId,
+        limit: OVERNIGHT_PAGE_LIMIT,
+        since,
+        types: base.types,
+        ...(base.full ? { full: true } : {}),
+      },
+      fetchImpl,
+    );
+    events.push(...result.events);
+    if (result.events.length < OVERNIGHT_PAGE_LIMIT) return { events, capped: false };
+    since = result.events[result.events.length - 1]!.id;
+  }
+  return { events, capped: true };
+}
+
+/**
+ * The events the overnight report is built from: the merges, read slim, with
+ * the `state_change` events read in full and laid over them.
+ *
+ * Also reads the first event of the span, of any type, as an **anchor**. With
+ * only two types filtered, a quiet span can hold no matching event old enough
+ * to prove the read reached the cutoff, and the report would claim to be
+ * incomplete on a perfectly quiet night. The anchor is the oldest event the
+ * span holds, so its time answers "does this span reach back to the cutoff"
+ * whatever the types in it. It is a real event, de-duplicated by id, so it
+ * never counts twice.
  *
  * Throws if any of its reads fail. That is deliberate: a missing
  * `state_change` read would leave moves into `blocked` unclassifiable, and a
@@ -133,17 +189,15 @@ export function overlayStateChanges(
 async function fetchOvernightEvents(
   personId: string | null,
   fetchImpl: typeof fetch,
-): Promise<SinceEvent[]> {
+): Promise<OvernightRead> {
   // The overnight report is about *last night*, so it must read the END of
   // the ledger. `readSinceBounded` is `WHERE id > since ORDER BY id ASC`, so
   // a fetch with no `since` starts at the ledger's beginning and LIMIT takes
   // the OLDEST rows, and the report renders a confident "0 merged" about
-  // events from months ago. A large page can hide this on a young ledger by
-  // reaching far enough to cover last night by accident; the window is wrong
-  // at any page size, and the smaller the page the more certainly it shows.
+  // events from months ago. The window is wrong at any page size.
   //
   // A cheap first probe gets `newestId` (the highest visible event id), and
-  // the real reads then start one page back from it. Two round-trips rather
+  // the real reads then start one span back from it. Two round-trips rather
   // than one, deliberately: `since` is an id cursor and takes no timestamp,
   // so this is the only way to reach the tail without widening the API.
   //
@@ -151,23 +205,21 @@ async function fetchOvernightEvents(
   // bounding `txId`, not a position in the `id` sequence `since` pages over.
   // See `tailCursor` for what conflating them did.
   const probe = await fetchFeed({ personId, limit: 1 }, fetchImpl);
-  const tailStart = tailCursor(probe.newestId, OVERNIGHT_EVENTS_LIMIT);
+  const tailStart = tailCursor(probe.newestId, OVERNIGHT_SPAN_IDS);
 
-  const [slim, stateChanges] = await Promise.all([
-    fetchFeed({ personId, limit: OVERNIGHT_EVENTS_LIMIT, since: tailStart }, fetchImpl),
-    // `full` only for `state_change`: see `OVERNIGHT_EVENTS_LIMIT`.
-    fetchFeed(
-      {
-        personId,
-        limit: OVERNIGHT_EVENTS_LIMIT,
-        since: tailStart,
-        full: true,
-        types: ["state_change"],
-      },
-      fetchImpl,
-    ),
+  const [merges, stateChanges, anchor] = await Promise.all([
+    readPages({ personId, since: tailStart, types: ["merge"] }, fetchImpl),
+    // `full` only for `state_change`: see `OVERNIGHT_SPAN_IDS`.
+    readPages({ personId, since: tailStart, types: ["state_change"], full: true }, fetchImpl),
+    fetchFeed({ personId, limit: 1, since: tailStart }, fetchImpl),
   ]);
-  return overlayStateChanges(slim.events, stateChanges.events);
+
+  const mergeIds = new Set(merges.events.map((event) => event.id));
+  const slim = [...merges.events, ...anchor.events.filter((event) => !mergeIds.has(event.id))];
+  return {
+    events: overlayStateChanges(slim, stateChanges.events),
+    capped: merges.capped || stateChanges.capped,
+  };
 }
 
 /** Turns one settled read into the state of its section, mapping the value on success. */
@@ -214,16 +266,19 @@ export async function fetchStandup(
   ]);
 
   return {
-    overnight: sectionOf(events, (eventList) =>
-      buildOvernightReport(
+    overnight: sectionOf(events, ({ events: eventList, capped }) => {
+      const report = buildOvernightReport(
         since,
         eventList,
         costs.status === "fulfilled" ? costs.value : null,
         inProgress.status === "fulfilled"
           ? inProgress.value.entries.flatMap((entry) => entry.assignments)
           : null,
-      ),
-    ),
+      );
+      // A capped read stopped before the newest events: the counts are a
+      // floor, which is what `eventsTruncated` says.
+      return capped ? { ...report, eventsTruncated: true } : report;
+    }),
     inFlight: sectionOf(inProgress, (column) => column.entries),
     projects: sectionOf(projects, (payload) => payload),
     // `fetchNeedsYou` returns the page and its `total` since T24; this screen
