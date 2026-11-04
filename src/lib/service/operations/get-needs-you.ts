@@ -63,6 +63,7 @@ import {
   type ItemRecord,
   type RawItemRow,
 } from "../items/row";
+import { rootProjectsFor, type RootProject } from "../items/root-project";
 
 /**
  * Why an item needs a person. Four reasons, never merged into one label —
@@ -145,11 +146,19 @@ export interface NeedsYouSummaryRecord {
    * refuse.
    */
   readonly tipCommitSha: string | null;
+  /**
+   * The project this item belongs to — its top-level ancestor of kind
+   * `project` — or `null` for a project itself and for an orphan. Resolved
+   * for the whole page in one statement (`../items/root-project.ts`), so a
+   * row can say which project it is for without a call per row.
+   */
+  readonly project: RootProject | null;
 }
 
-/** A `full: true` row — the whole record, with the derived reason still attached. */
+/** A `full: true` row — the whole record, with the derived reason and project attached. */
 export interface NeedsYouRecord extends ItemRecord {
   readonly reason: NeedsYouReason;
+  readonly project: RootProject | null;
 }
 
 export interface GetNeedsYouOutput {
@@ -354,10 +363,18 @@ export const getNeedsYou = defineOperation({
 
     const hasMore = rows.length > input.limit;
     const page = hasMore ? rows.slice(0, input.limit) : rows;
+    // The root project of every row on this page, in one statement — never
+    // one per row. Read after the page is cut so it is keyed on exactly the
+    // ids being returned.
+    const projects = await rootProjectsFor(
+      ctx.db,
+      page.map((row) => row.id),
+    );
     const items = input.full
       ? (page as (RawItemRow & { reason: string })[]).map((row) => ({
           ...toItemRecord(row),
           reason: row.reason as NeedsYouReason,
+          project: projects.get(row.id) ?? null,
         }))
       : (page as RawNeedsYouSummaryRow[]).map((row) => ({
           id: row.id,
@@ -370,6 +387,7 @@ export const getNeedsYou = defineOperation({
           mergeAuthority: row.mergeAuthority,
           needsVisualReview: row.needsVisualReview,
           tipCommitSha: row.tipCommitSha,
+          project: projects.get(row.id) ?? null,
         }));
 
     return {

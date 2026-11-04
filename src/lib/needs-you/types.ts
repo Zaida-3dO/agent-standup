@@ -43,4 +43,13 @@ export interface NeedsYouItem {
    * server-side field's own doc in `get-needs-you.ts`.
    */
   readonly tipCommitSha: string | null;
+  /**
+   * The project this item belongs to — its top-level ancestor of kind
+   * `project` — or `null` for a project itself or an orphan.
+   *
+   * Optional only because this file mirrors the wire by hand and a response
+   * from a server that predates the field carries none; read an absent value
+   * as `null`.
+   */
+  readonly project?: { readonly id: string; readonly title: string } | null;
 }

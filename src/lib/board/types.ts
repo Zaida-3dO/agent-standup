@@ -69,6 +69,14 @@ export interface BoardItem {
    * distinction never reaches a reader.
    */
   readonly links?: readonly { readonly key: string; readonly url: string }[];
+  /**
+   * The project this item belongs to — its top-level ancestor of kind
+   * `project` — or `null` for a project itself or an orphan.
+   *
+   * Optional for the same reason `links` is: the wire is mirrored by hand,
+   * and an absent value reads as `null`.
+   */
+  readonly project?: { readonly id: string; readonly title: string } | null;
 }
 
 /**

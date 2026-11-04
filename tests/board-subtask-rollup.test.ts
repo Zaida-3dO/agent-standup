@@ -126,6 +126,33 @@ describeIfDb("a board card counts the work beneath it", () => {
   }
 
   /**
+   * How many statements containing `marker` one `get_board` read issues —
+   * counted from the query log, so it measures what reached Postgres rather
+   * than what the code intended to send.
+   */
+  async function countStatements(area: string, marker: string): Promise<number> {
+    let seen = 0;
+    const listener = (event: { query: string }) => {
+      if (event.query.includes(marker)) seen++;
+    };
+    const logged = createTestPrismaClient(scratchUrl, {
+      log: [{ emit: "event", level: "query" }],
+    });
+    logged.$on("query", listener);
+    const loggedRuntime = new ServiceRuntime({
+      transaction: prismaTransactionRunner(logged),
+      resolveSnapshot: async () => defaultSnapshot(),
+    });
+    await loggedRuntime.call("get_board", {
+      area,
+      column: "backlog",
+      limit: 200,
+    });
+    await logged.$disconnect();
+    return seen;
+  }
+
+  /**
    * A three-level chain: project → task → subtask → grandchild.
    *
    * Four levels of row so that the *task* card — the one the default board
@@ -264,27 +291,7 @@ describeIfDb("a board card counts the work beneath it", () => {
       // project's column whose CTE is called `subtree`, so a looser match
       // on "WITH RECURSIVE subtree" counts both and reports 2 for a single
       // rollup — a probe that fails while the code is correct.
-      async function countRollupStatements(area: string): Promise<number> {
-        let seen = 0;
-        const listener = (event: { query: string }) => {
-          if (event.query.includes("rollup_subtree")) seen++;
-        };
-        const logged = createTestPrismaClient(scratchUrl, {
-          log: [{ emit: "event", level: "query" }],
-        });
-        logged.$on("query", listener);
-        const loggedRuntime = new ServiceRuntime({
-          transaction: prismaTransactionRunner(logged),
-          resolveSnapshot: async () => defaultSnapshot(),
-        });
-        await loggedRuntime.call("get_board", {
-          area,
-          column: "backlog",
-          limit: 200,
-        });
-        await logged.$disconnect();
-        return seen;
-      }
+      const countRollupStatements = (area: string) => countStatements(area, "rollup_subtree");
 
       // One card with children...
       await chain("rollup-n1-small");
@@ -296,6 +303,51 @@ describeIfDb("a board card counts the work beneath it", () => {
       }
       const large = await countRollupStatements("rollup-n1-large");
 
+      expect(small).toBe(1);
+      expect(large).toBe(1);
+    });
+  });
+
+  describe("every entry names the project it belongs to", () => {
+    it("names the top project for a task, a subtask and a grandchild, and null for a project or an orphan", async () => {
+      const ids = await chain("root-project-shape");
+      // An orphan: a task with no parent at all, and a subtask hanging under
+      // it — a chain that ends on something other than a project.
+      const orphanTask = await createItem({ area: "root-project-shape", title: "Orphan" });
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Item" SET "kind" = 'task'::"ItemKind", "depth" = 1 WHERE "id" = $1`,
+        orphanTask.id,
+      );
+      const orphanChild = await createItem({
+        area: "root-project-shape",
+        title: "Orphan child",
+        parentId: orphanTask.id,
+      });
+      const entries = await entriesByArea("root-project-shape");
+
+      const project = { id: ids.project, title: "Project" };
+      // Fails if the walk stops at the first parent: the task alone would
+      // pass, the grandchild three levels down would name its subtask.
+      expect(entries.get(ids.task)?.item.project).toEqual(project);
+      expect(entries.get(ids.subtask)?.item.project).toEqual(project);
+      expect(entries.get(ids.grandchild)?.item.project).toEqual(project);
+      // A project is not "in" a project, and an orphan is in none.
+      expect(entries.get(ids.project)?.item.project).toBeNull();
+      expect(entries.get(orphanTask.id)?.item.project).toBeNull();
+      expect(entries.get(orphanChild.id)?.item.project).toBeNull();
+    });
+
+    it("resolves every project in one statement, however many cards there are", async () => {
+      await chain("root-project-n1-small");
+      const small = await countStatements("root-project-n1-small", "root_project_walk");
+
+      for (let index = 0; index < 6; index++) {
+        await chain("root-project-n1-large");
+      }
+      const large = await countStatements("root-project-n1-large", "root_project_walk");
+
+      // Fails if the lookup moves inside the entry loop: `large` grows with
+      // the card count while `small` stays at one.
       expect(small).toBe(1);
       expect(large).toBe(1);
     });

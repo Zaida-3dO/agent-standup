@@ -74,6 +74,7 @@ import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { readSinceBounded, type EventRow } from "@/lib/events";
 import { InvalidInputError } from "../errors";
+import { rootProjectsFor, type RootProject } from "../items/root-project";
 
 /**
  * The slice bound.
@@ -165,6 +166,13 @@ export interface SinceEvent {
   readonly itemId: string | null;
   /** The item's title, when the event is scoped to one — so a row reads as prose without a second call. */
   readonly itemTitle: string | null;
+  /**
+   * The project the event's item belongs to — its top-level ancestor of kind
+   * `project` — or `null` when the event has no item, is a project's own, or
+   * the item is an orphan. Two short strings per event, which is the whole of
+   * what the slim shape grows by.
+   */
+  readonly project: RootProject | null;
   readonly ts: string;
   readonly actorType: EventRow["actorType"];
   readonly actorId: string | null;
@@ -310,6 +318,10 @@ export const getEvents = defineOperation({
       for (const row of titleRows) titles.set(row.id, row.title);
     }
 
+    // The root project of those same items — again one statement for the
+    // slice, keyed on the ids already in hand.
+    const projects = await rootProjectsFor(ctx.db, itemIds);
+
     // A genuine first visit: this profile has no read state *anywhere*, not
     // merely none within this slice. Asked as its own existence check
     // because the distinction is exactly the one the module header is about
@@ -331,6 +343,7 @@ export const getEvents = defineOperation({
         txId: event.txId.toString(),
         itemId: event.itemId,
         itemTitle: event.itemId !== null ? (titles.get(event.itemId) ?? null) : null,
+        project: event.itemId !== null ? (projects.get(event.itemId) ?? null) : null,
         ts: event.ts.toISOString(),
         actorType: event.actorType,
         actorId: event.actorId,

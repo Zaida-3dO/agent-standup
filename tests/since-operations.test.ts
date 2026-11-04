@@ -65,6 +65,18 @@ describeIfDb("since your last visit, against Postgres", () => {
     return item.id;
   }
 
+  /** A task or subtask under `parentId`, so a chain of arbitrary depth can be built. */
+  async function createChild(title: string, parentId: string): Promise<string> {
+    const item = (await runtime.call("create_item", {
+      title,
+      body: "x",
+      area: "since-tests",
+      originType: "auto",
+      parentId,
+    })) as { id: string };
+    return item.id;
+  }
+
   /**
    * Appends an event the same way the application does — through a real
    * operation — and waits for it to clear the visibility horizon.
@@ -474,6 +486,91 @@ describeIfDb("since your last visit, against Postgres", () => {
       // throws outright on a bigint, which is what the HTTP route would hit.
       expect(() => JSON.stringify(feed)).not.toThrow();
     }, 30_000);
+
+    it("names the project each event's item belongs to, adding only the project fields to a slim row", async () => {
+      const project = await createItem("Recipe box");
+      const task = await createChild("Task", project);
+      const subtask = await createChild("Subtask", task);
+      const grandchild = await createChild("Grandchild", subtask);
+      const orphan = await createItem("Orphan");
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Item" SET "kind" = 'task'::"ItemKind", "depth" = 1 WHERE "id" = $1`,
+        orphan,
+      );
+      const noteIds = new Map<string, string>();
+      for (const id of [project, task, subtask, grandchild, orphan]) {
+        noteIds.set(id, await appendNote(id, "note"));
+      }
+      const lowest = [...noteIds.values()].reduce((a, b) => (BigInt(a) < BigInt(b) ? a : b));
+      const feed = await getEvents({ since: String(BigInt(lowest) - 1n), limit: 200 });
+      const eventFor = (itemId: string) => feed.events.find((e) => e.id === noteIds.get(itemId))!;
+
+      const recipeBox = { id: project, title: "Recipe box" };
+      // Fails if the walk stops at the first parent: the grandchild would
+      // name its subtask.
+      expect(eventFor(task).project).toEqual(recipeBox);
+      expect(eventFor(subtask).project).toEqual(recipeBox);
+      expect(eventFor(grandchild).project).toEqual(recipeBox);
+      // A project's own event, and an orphan's, name no project.
+      expect(eventFor(project).project).toBeNull();
+      expect(eventFor(orphan).project).toBeNull();
+
+      // The slim row grew by the project fields and nothing else: the same
+      // keys as before plus `project`, and the extra bytes are no more than
+      // the serialised pair and its key.
+      const { project: named, ...rest } = eventFor(grandchild);
+      expect(Object.keys(rest).sort()).toEqual(
+        [
+          "actorId",
+          "actorType",
+          "assignmentId",
+          "id",
+          "itemId",
+          "itemTitle",
+          "seen",
+          "seenByAnyone",
+          "sessionId",
+          "ts",
+          "txId",
+          "type",
+        ].sort(),
+      );
+      const growth =
+        JSON.stringify(eventFor(grandchild)).length - JSON.stringify(rest).length;
+      expect(growth).toBeLessThanOrEqual(JSON.stringify(named).length + ',"project":'.length);
+    }, 60_000);
+
+    it("looks every project up in one statement for the whole slice", async () => {
+      const lastIds: string[] = [];
+      for (let index = 0; index < 4; index++) {
+        const project = await createItem(`Project ${index}`);
+        const task = await createChild("Task", project);
+        lastIds.push(await appendNote(project, "note"), await appendNote(task, "note"));
+      }
+      const lowest = lastIds.reduce((a, b) => (BigInt(a) < BigInt(b) ? a : b));
+
+      let seen = 0;
+      const logged = createTestPrismaClient(scratchUrl, {
+        log: [{ emit: "event", level: "query" }],
+      });
+      logged.$on("query", (event: { query: string }) => {
+        if (event.query.includes("root_project_walk")) seen++;
+      });
+      const loggedRuntime = new ServiceRuntime({
+        transaction: prismaTransactionRunner(logged),
+        resolveSnapshot: async () => defaultSnapshot(),
+      });
+      const feed = (await loggedRuntime.call("get_events", {
+        since: String(BigInt(lowest) - 1n),
+        limit: 200,
+      })) as GetEventsOutput;
+      await logged.$disconnect();
+
+      // Many events over many items, one statement. Fails if the lookup
+      // moves into the event map, where `seen` would track the row count.
+      expect(feed.events.length).toBeGreaterThanOrEqual(8);
+      expect(seen).toBe(1);
+    }, 60_000);
 
     it("reports a horizon so a caller can tell a short delay from a stuck one", async () => {
       const feed = await getEvents({});

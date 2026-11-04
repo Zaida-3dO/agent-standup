@@ -50,6 +50,13 @@ export interface SinceEvent {
   readonly id: string;
   readonly itemId: string | null;
   readonly itemTitle: string | null;
+  /**
+   * The project the event's item belongs to — its top-level ancestor of kind
+   * `project` — or `null` for an event with no item, a project's own event,
+   * or an orphan. Optional only because this file mirrors the wire by hand;
+   * read an absent value as `null`.
+   */
+  readonly project?: { readonly id: string; readonly title: string } | null;
   /** ISO 8601. */
   readonly ts: string;
   readonly actorType: "person" | "agent" | "system";

@@ -315,6 +315,82 @@ describeIfDb("get_needs_you against Postgres", () => {
     });
   });
 
+  describe("the project each row names", () => {
+    /** project → task → subtask → grandchild, every one waiting on a plan review. */
+    async function planReviewChain(area: string) {
+      const project = await createItem({ area, title: "Recipe box" });
+      const task = await createItem({ area, title: "Task", parentId: project.id });
+      const subtask = await createItem({ area, title: "Subtask", parentId: task.id });
+      const grandchild = await createItem({ area, title: "Grandchild", parentId: subtask.id });
+      for (const item of [project, task, subtask, grandchild]) {
+        await shape(item.id, { state: "plan_review" });
+      }
+      return { project, task, subtask, grandchild };
+    }
+
+    it("names the top project for a task and a subtask nested three deep, and null for a project or an orphan", async () => {
+      const me = await createPerson("nyu-me-project");
+      const chain = await planReviewChain("nyu-project");
+      const orphan = await createItem({ area: "nyu-project", title: "Orphan" });
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Item" SET "kind" = 'task'::"ItemKind", "depth" = 1 WHERE "id" = $1`,
+        orphan.id,
+      );
+      await shape(orphan.id, { state: "plan_review" });
+
+      const result = await needsYou({ personId: me, limit: 200 });
+      const projectOf = new Map(result.items.map((item) => [item.id, item.project]));
+      const recipeBox = { id: chain.project.id, title: "Recipe box" };
+
+      // Fails if the walk stops at the first parent: the grandchild would
+      // name its subtask, and the subtask its task.
+      expect(projectOf.get(chain.task.id)).toEqual(recipeBox);
+      expect(projectOf.get(chain.subtask.id)).toEqual(recipeBox);
+      expect(projectOf.get(chain.grandchild.id)).toEqual(recipeBox);
+      // A project is not "in" a project, and an orphan is in none. Both must
+      // be an explicit null: `undefined` would drop the key from the JSON.
+      expect(projectOf.get(chain.project.id)).toBeNull();
+      expect(projectOf.get(orphan.id)).toBeNull();
+    });
+
+    it("names the project on a full record too", async () => {
+      const me = await createPerson("nyu-me-project-full");
+      const chain = await planReviewChain("nyu-project-full");
+      const result = await needsYou({ personId: me, limit: 200, full: true });
+      const row = result.items.find((item) => item.id === chain.subtask.id);
+      expect(row?.project).toEqual({ id: chain.project.id, title: "Recipe box" });
+    });
+
+    it("looks every project up in one statement, however many rows the page holds", async () => {
+      const me = await createPerson("nyu-me-project-n1");
+      await planReviewChain("nyu-project-n1");
+      await planReviewChain("nyu-project-n1");
+      await planReviewChain("nyu-project-n1");
+
+      let seen = 0;
+      const logged = createTestPrismaClient(scratchUrl, {
+        log: [{ emit: "event", level: "query" }],
+      });
+      logged.$on("query", (event: { query: string }) => {
+        if (event.query.includes("root_project_walk")) seen++;
+      });
+      const loggedRuntime = new ServiceRuntime({
+        transaction: prismaTransactionRunner(logged),
+        resolveSnapshot: async () => defaultSnapshot(),
+      });
+      const page = (await loggedRuntime.call("get_needs_you", {
+        personId: me,
+        limit: 200,
+      })) as GetNeedsYouOutput;
+      await logged.$disconnect();
+
+      // Many rows, one statement. Fails if the lookup moves into the row
+      // map, where `seen` would equal the page length.
+      expect(page.items.length).toBeGreaterThanOrEqual(12);
+      expect(seen).toBe(1);
+    });
+  });
+
   describe("the total", () => {
     it("counts every admitted item, not the page — which is what the badge reads", async () => {
       const me = await createPerson("nyu-me-8");

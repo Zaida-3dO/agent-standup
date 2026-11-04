@@ -189,6 +189,7 @@ import {
   type RawBoardItemSummaryRow,
   type RawItemRow,
 } from "../items/row";
+import { rootProjectsFor, type RootProject } from "../items/root-project";
 import {
   BOARD_COLUMNS,
   STATES_BY_COLUMN,
@@ -479,9 +480,22 @@ function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+/**
+ * The item a board entry carries: the slim board shape by default, the whole
+ * record when `full` was passed, plus the project it belongs to.
+ *
+ * `project` is its top-level ancestor of kind `project`, or `null` for a
+ * project itself and for an orphan. It is resolved for the whole response in
+ * one statement (`../items/root-project.ts`), alongside ownership, trust and
+ * the rollup, so a card can name its project without a call per card.
+ */
+export type BoardEntryItem = (BoardItemSummaryRecord | ItemRecord) & {
+  readonly project: RootProject | null;
+};
+
 export interface BoardEntry {
-  /** The slim board shape by default; the whole record when `full` was passed. */
-  readonly item: BoardItemSummaryRecord | ItemRecord;
+  /** The slim board shape by default; the whole record when `full` was passed — plus its root `project`. */
+  readonly item: BoardEntryItem;
   /** The item's own state, mapped straight through for a task/subtask. Always present on a project too — see `columns.ts`'s `columnForProject` header for why it must not be read as the project's column. */
   readonly column: BoardColumn;
   /**
@@ -922,7 +936,15 @@ export const getBoard = defineOperation({
         // `assignments`, below — a project's rollup is counted exactly like
         // any other card's, over the subtree its column was just derived
         // from.
-        list.push({ item, column, assignments: [], trust: null, subtasks: null });
+        // A project is not "in" a project, so its `project` is `null` here
+        // and stays so — the root-project pass below yields no entry for it.
+        list.push({
+          item: { ...item, project: null },
+          column,
+          assignments: [],
+          trust: null,
+          subtasks: null,
+        });
         projectEntries.set(column, list);
       }
     }
@@ -1022,7 +1044,9 @@ export const getBoard = defineOperation({
           ? (page as RawItemRow[]).map(toItemRecord)
           : (page as RawBoardItemSummaryRow[]).map(toBoardItemSummaryRecord);
         entries = items.map((item) => ({
-          item,
+          // `project` is filled for the whole response in one statement,
+          // below, with the other per-card passes.
+          item: { ...item, project: null },
           column: columnForState(requireItemState(item.state, item.id)),
           assignments: [],
           // Filled in the same one-statement pass as `assignments`, below —
@@ -1104,11 +1128,17 @@ export const getBoard = defineOperation({
       ]);
       const rollupsByItem = groupSubtaskRollupsByItem(rollupRows);
 
+      // The project each card belongs to — the same one-statement shape
+      // again, walking `parentId` upward from every entry id at once. A
+      // project's own id yields no entry, so its `project` stays `null`.
+      const projectsByItem = await rootProjectsFor(ctx.db, entryIds);
+
       for (const column of requested) {
         board[column] = {
           ...board[column],
           entries: board[column].entries.map((entry) => ({
             ...entry,
+            item: { ...entry.item, project: projectsByItem.get(entry.item.id) ?? null },
             // `?? []` is what makes "nobody holds this" an empty array
             // rather than an absent field — see `BoardEntry.assignments`.
             assignments: assignmentsByItem.get(entry.item.id) ?? [],
