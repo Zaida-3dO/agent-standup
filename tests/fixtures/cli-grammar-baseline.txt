@@ -135,7 +135,7 @@ summary	item	note	93d9e1d3f90a4243
 summary	item	orientation	46bb09bd14026074
 summary	item	request-review	fc02ef16e38e3285
 summary	item	restore	fec63939342d2740
-summary	item	retype	1f5d7207cf8119f6
+summary	item	retype	79f180dd8a63fe7c
 summary	item	search	0377725be93aaad8
 summary	item	stale	0e11f04012c3d92d
 summary	item	transition	dc15901c130fed1b
@@ -176,7 +176,7 @@ summary	session	shape	977f6d2ef6ff08e4
 summary	session	sweep	7bfc6289ad003fd0
 summary	session	takeover	b6b926b7ce0e655e
 summary	subtask	create	9066a624f6e1c7dd
-summary	task	create	c849afba653b6c31
+summary	task	create	c600777f833b662c
 verbs	account	get list update
 verbs	area	create get list merge update
 verbs	backfill	run
