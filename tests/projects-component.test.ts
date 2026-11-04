@@ -8,9 +8,11 @@
 //
 //   - a childless project must not render a progress bar at all, because a
 //     bar at 0% is the false claim this whole row exists to avoid,
-//   - it must carry a visible flag, not merely a data attribute,
-//   - the grid must render every project it was given, including the broken
-//     ones — hiding them is the failure mode named in the task.
+//   - it must say so in words, quietly, and must NOT carry a warning — an
+//     empty project is normal and needs nothing from the reader,
+//   - the grid must render every project it was given, the empty ones in
+//     their own "Not started" section — hiding them would make the count
+//     disagree with what is under it.
 //
 // Each test names the single-character change that would break it.
 import { describe, expect, it } from "vitest";
@@ -313,8 +315,32 @@ describe("ProjectCard", () => {
           return list.filter((c) => typeof c === "string");
         })
         .join(" ");
-      expect(text).toContain("Crew One");
-      expect(text).toContain("Crew Old");
+      // Agents are named in plain words, never by their crew name.
+      expect(text).toContain("an agent");
+      expect(text).not.toContain("Crew One");
+      expect(text).not.toContain("Crew Old");
+    });
+
+    it("keeps a person holder's name", () => {
+      // Breaks if: the plain-words rule is applied to people too.
+      const tree = ProjectCard({
+        project: makeProject({
+          counts: { ...noCounts(), executing: 1 },
+          assignments: [
+            {
+              holderId: "user-a",
+              holderType: "person",
+              displayName: "Dana",
+              role: "builder",
+              roleCustom: null,
+              liveness: "running",
+              lastActive: "2026-08-18T11:00:00.000Z",
+            },
+          ],
+        }),
+        now: NOW,
+      });
+      expect(textOf(tree)).toContain("Dana");
     });
 
     it("renders no presence rows when nobody holds it", () => {
@@ -342,18 +368,36 @@ describe("ProjectCard", () => {
       expect(textOf(tree)).not.toContain("0%");
     });
 
-    it("says plainly that there is no work under it", () => {
-      // Flagged, and flagged in words — a data attribute alone is invisible
-      // to the person the flag is for.
+    it("says quietly that it is not started, with no warning and no repair link", () => {
+      // An empty project needs nothing from the reader, so it must not be
+      // flagged. Said in words, because a data attribute alone is invisible.
       //
-      // Breaks if: the notice's text is emptied.
+      // Breaks if: the "Needs attention" badge or the "Repair it" link
+      // comes back, or the notice's text is emptied.
       const tree = ProjectCard({ project: childless, now: NOW });
 
-      expect(textOf(tree)).toContain("No work under this project yet");
-      expect(textOf(tree)).toContain("Needs attention");
+      expect(textOf(tree)).toContain("Not started yet.");
+      expect(textOf(tree)).not.toContain("Needs attention");
+      expect(textOf(tree)).not.toContain("Repair");
+      expect(textOf(tree)).not.toContain("No work under this project");
+      const suspect = [...walk(tree)].filter(
+        (element) =>
+          (element.props as { "data-suspect-reason"?: string })["data-suspect-reason"] !==
+          undefined,
+      );
+      expect(suspect).toHaveLength(0);
     });
 
-    it("marks itself childless for the styling that flags it", () => {
+    it("links nowhere but the board: the only link is the title", () => {
+      // Breaks if: a repair link is re-added inside the empty notice.
+      const tree = ProjectCard({ project: childless, now: NOW });
+      const links = [...walk(tree)].filter(
+        (element) => (element.props as { href?: string }).href !== undefined,
+      );
+      expect(links).toHaveLength(1);
+    });
+
+    it("marks itself childless for the styling hook", () => {
       // Breaks if: `data-childless` stops reflecting `project.childless`.
       const tree = ProjectCard({ project: childless, now: NOW });
       const article = [...walk(tree)][0]!;
@@ -378,12 +422,12 @@ describe("ProjectCard", () => {
 });
 
 describe("ProjectsView", () => {
-  it("renders a card for every project, including the broken ones", () => {
-    // Hiding structurally suspect rows is the failure mode this row exists
-    // to avoid — the count at the top stops matching what is under it.
+  it("renders a card for every project, including the empty ones", () => {
+    // Hiding the empty rows would make the count at the top stop matching
+    // what is under it.
     //
-    // Breaks if: a `.filter((p) => !p.childless)` is added anywhere on the
-    // path — two cards render instead of three.
+    // Breaks if: a `.filter((p) => !p.childless)` is dropped without the
+    // not-started section picking them up — two cards render instead of three.
     const tree = ProjectsView({
       loadState: {
         status: "loaded",
@@ -402,11 +446,48 @@ describe("ProjectsView", () => {
     expect(findAllByType(tree, ProjectCard)).toHaveLength(3);
   });
 
-  it("surfaces how many projects have no work under them", () => {
-    // At the top, so a reader learns how much of the page is affected
-    // before reading it as a status report.
-    //
-    // Breaks if: the `childlessCount > 0` block is removed.
+  /** The elements marked as the quiet section. */
+  function notStartedSections(tree: unknown) {
+    return [...walk(tree as never)].filter(
+      (element) => (element.props as { "data-section"?: string })["data-section"] === "not-started",
+    );
+  }
+
+  it("puts projects with nothing under them in their own Not started section", () => {
+    // Breaks if: the empty projects go back into the main grid, or the
+    // section is dropped — the heading and the count disappear.
+    const tree = ProjectsView({
+      loadState: {
+        status: "loaded",
+        payload: {
+          projects: [
+            makeProject({ id: "a", counts: { ...noCounts(), executing: 1 } }),
+            makeProject({ id: "b", total: 0, childless: true }),
+            makeProject({ id: "c", total: 0, childless: true }),
+          ],
+          childlessCount: 2,
+        },
+      },
+      now: NOW,
+    });
+
+    const [section] = notStartedSections(tree);
+    expect(section).toBeDefined();
+    const inSection = findAllByType(section, ProjectCard).map(
+      (card) => (card.props as { project: ProjectRollup }).project.id,
+    );
+    expect(inSection.sort()).toEqual(["b", "c"]);
+    expect(textOf(section)).toContain("Not started (2)");
+    // The main grid holds only the project with work.
+    const all = findAllByType(tree, ProjectCard).map(
+      (card) => (card.props as { project: ProjectRollup }).project.id,
+    );
+    expect(all.filter((id) => !inSection.includes(id))).toEqual(["a"]);
+  });
+
+  it("raises no warning about empty projects anywhere on the page", () => {
+    // Breaks if: an "N with no work under them" tally or a
+    // "Needs attention" badge returns to the header.
     const tree = ProjectsView({
       loadState: {
         status: "loaded",
@@ -418,18 +499,18 @@ describe("ProjectsView", () => {
       now: NOW,
     });
 
-    const flag = [...walk(tree)].find(
+    expect(textOf(tree)).not.toContain("with no work under");
+    expect(textOf(tree)).not.toContain("Needs attention");
+    const tally = [...walk(tree)].filter(
       (element) =>
         (element.props as { "data-childless-count"?: number })["data-childless-count"] !==
         undefined,
     );
-    expect((flag!.props as { "data-childless-count": number })["data-childless-count"]).toBe(1);
-    expect(textOf(tree)).toContain("with no work under");
+    expect(tally).toHaveLength(0);
   });
 
-  it("shows no childless flag when every project has work", () => {
-    // Breaks if: the flag renders unconditionally — it would claim a
-    // problem that does not exist.
+  it("shows no Not started section when every project has work", () => {
+    // Breaks if: the section renders unconditionally — an empty heading.
     const tree = ProjectsView({
       loadState: {
         status: "loaded",
@@ -441,7 +522,26 @@ describe("ProjectsView", () => {
       now: NOW,
     });
 
-    expect(textOf(tree)).not.toContain("with no work under");
+    expect(notStartedSections(tree)).toHaveLength(0);
+    expect(textOf(tree)).not.toContain("Not started");
+  });
+
+  it("shows only the quiet section when every project is empty", () => {
+    // Breaks if: an empty main grid renders above the section, or the page
+    // falls back to "No projects to show." because the main list is empty.
+    const tree = ProjectsView({
+      loadState: {
+        status: "loaded",
+        payload: {
+          projects: [makeProject({ id: "b", total: 0, childless: true })],
+          childlessCount: 1,
+        },
+      },
+      now: NOW,
+    });
+
+    expect(notStartedSections(tree)).toHaveLength(1);
+    expect(textOf(tree)).not.toContain("No projects to show.");
   });
 
   it("renders the error message, and no cards, when the load failed", () => {

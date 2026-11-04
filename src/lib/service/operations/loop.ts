@@ -210,7 +210,7 @@ export const loop = defineOperation({
   name: "loop",
   kind: "write",
   summary:
-    "Works with the loose ends on an item — say which with action. add records one (kind defaults to work; pass note for a reference that is not work outstanding, or blocked_on_person for something waiting on a human). list and get read them. edit rewords one — omitting kind there LEAVES THE KIND ALONE rather than resetting it to work. close resolves a real loose end and takes an optional reason saying how; delete retracts one that should never have existed and requires a reason. Both reasons are kept and reported back.",
+    "Works with the loose ends on an item — say which with action. add records one (kind defaults to work; pass note for a reference that is not work outstanding, or blocked_on_person for something waiting on a human). list and get read them. edit rewords one — omitting kind there LEAVES THE KIND ALONE rather than resetting it to work. close resolves a real loose end and takes an optional reason saying how; delete retracts one that should never have existed and requires a reason. Both reasons are kept and reported back. Implementation steps of a task are recorded as loops on that task (action add) rather than as subtasks: the board shows results a person would recognise, and at most a count of open loops.",
   contract: {
     rules: [
       {

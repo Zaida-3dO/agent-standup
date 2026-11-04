@@ -26,6 +26,8 @@ import {
 } from "@/lib/project-detail/view";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { RepoChip } from "@/components/chips/RepoChip";
+import { showRepoTag } from "@/lib/design/repo-tag";
+import { holdersLabel } from "@/lib/design/holder-label";
 import { DerivedStatePanel } from "./DerivedStatePanel";
 import { RepairPanel } from "./RepairPanel";
 import styles from "./ProjectDetail.module.css";
@@ -92,7 +94,9 @@ export function ProjectDetailView({
         )}
         <div className={styles.headerMeta}>
           <AreaChip area={detail.project.area} />
-          {detail.project.repo !== null && <RepoChip repo={detail.project.repo} />}
+          {showRepoTag(detail.project.area, detail.project.repo) && (
+            <RepoChip repo={detail.project.repo} />
+          )}
           {crew > 0 && (
             <span
               className={styles.crew}
@@ -215,7 +219,7 @@ export function ProjectDetailView({
                   {child.assignments.length > 0 && (
                     <span className={styles.crew}>
                       <span className={styles.crewDot} aria-hidden="true" />
-                      {child.assignments.map((a) => a.displayName).join(", ")}
+                      {holdersLabel(child.assignments)}
                     </span>
                   )}
                   <span>{relativeTime(child.updatedAt, now)}</span>

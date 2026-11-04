@@ -86,7 +86,7 @@ describeIfDb("a facade's delegate schema refuses by name", () => {
 
   /** A create with neither cross-field rule satisfied yet, so a case adds only what it tests. */
   function work(title: string) {
-    return { type: "task" as const, projectId: "inbox", title, body: "The brief." };
+    return { type: "task" as const, projectId: "a-project-id", title, body: "The brief." };
   }
 
   describe("exactly one of area or areas", () => {

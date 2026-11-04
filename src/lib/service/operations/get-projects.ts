@@ -298,7 +298,7 @@ export const getProjects = defineOperation({
   name: "get_projects",
   kind: "read",
   summary:
-    "Lists projects with their subtree rolled up: child counts by state, total, merged and finished counts, progress, last activity and live crew. Progress is finished over total — every terminal state, so work closed as cancelled or wont_do counts as done, not as outstanding; merged is reported separately as what shipped. A childless project reports progress null and childless true, never zero percent, and is never hidden. Archived projects and descendants are excluded from every rollup number — pass includeArchived to audit them. Paged: pass limit and cursor, read nextCursor.",
+    "Lists projects with their subtree rolled up: child counts by state, total, merged and finished counts, progress, last activity and live crew. Progress is finished over total — every terminal state, so work closed as cancelled or wont_do counts as done, not as outstanding; merged is reported separately as what shipped. A childless project reports progress null and childless true, never zero percent, and is not hidden (the one exception is the Inbox, which is hidden by default once nothing in it is open). Archived projects and descendants are excluded from every rollup number — pass includeArchived to audit them. Paged: pass limit and cursor, read nextCursor.",
   // Stryker restore all
   input: inputSchema,
   contract: {
@@ -437,6 +437,13 @@ export const getProjects = defineOperation({
       MAX_LIMIT + 1,
     );
 
+    // The Inbox is not a place for new work: its finished items stay as
+    // history, and the project drops out of the default list once nothing in
+    // it is open. Matched the way `resolveInboxProject` finds it — by the
+    // `items.inbox_project` title on a root — so the two agree on which
+    // project is meant.
+    const inboxTitle = ctx.settings.values["items.inbox_project"];
+
     const rollups: ProjectRollup[] = [];
     for (const row of rows) {
       const counts = countsFrom(row);
@@ -452,6 +459,12 @@ export const getProjects = defineOperation({
       // exclusion: `0 === 0` is true, so without it the default read would
       // hide exactly the rows this operation is required to surface.
       if (!input.includeCompleted && !childless && finished === total) continue;
+
+      // An Inbox with no open work is history, hidden from the default list
+      // whether it is empty or fully finished. `includeCompleted` brings it
+      // back, as it brings back every other finished project. An Inbox that
+      // still holds open items is shown: they are work somebody must move.
+      if (!input.includeCompleted && row.title === inboxTitle && finished === total) continue;
 
       const lastChildActivity = isoOrStringOrNull(row.lastChildActivity);
       const ownUpdatedAt = isoOrString(row.updatedAt);

@@ -587,6 +587,35 @@ describe("ItemCard", () => {
     expect(textOf(noRepo)).not.toContain("null");
   });
 
+  it("shows ONE tag when the area and the repo are the same name", () => {
+    // "web web" says nothing the first tag did not. Breaks if: the card goes
+    // back to rendering the repo chip whenever a repo exists.
+    const same = ItemCard({
+      entry: entry("backlog", { area: "web", repo: "web" }),
+      needsYou: false,
+      now: 0,
+    });
+    expect(findAllByType(same, AreaChip)).toHaveLength(1);
+    expect(findAllByType(same, RepoChip)).toHaveLength(0);
+
+    // Case and separators do not make two names.
+    const loose = ItemCard({
+      entry: entry("backlog", { area: "web-platform", repo: "Web_Platform" }),
+      needsYou: false,
+      now: 0,
+    });
+    expect(findAllByType(loose, RepoChip)).toHaveLength(0);
+
+    // Different names keep both tags: the dedupe must not swallow a repo.
+    const different = ItemCard({
+      entry: entry("backlog", { area: "web", repo: "web-api" }),
+      needsYou: false,
+      now: 0,
+    });
+    expect(findAllByType(different, AreaChip)).toHaveLength(1);
+    expect(findAllByType(different, RepoChip)).toHaveLength(1);
+  });
+
   it("shows the area as a chip, so the board's own grouping is visible on the cards", () => {
     // The area was not rendered on a card AT ALL before this pass, which
     // meant the axis the board is grouped by was invisible on the things
@@ -754,10 +783,12 @@ describe("ItemCard", () => {
       expect(findAllByType(card, AgentPresenceDot)).toHaveLength(0);
     });
 
-    it("shows the holder's name and a presence dot for a live claim", () => {
+    it("shows a person holder by name and a presence dot for a live claim", () => {
       const held: BoardEntry = {
         ...entry("in_progress"),
-        assignments: [assignment({ displayName: "Gary", liveness: "running" })],
+        assignments: [
+          assignment({ holderType: "person", displayName: "Gary", liveness: "running" }),
+        ],
       };
       const card = ItemCard({ entry: held, needsYou: false, now: 0 });
       expect(textOf(card)).toContain("Gary");
@@ -774,14 +805,35 @@ describe("ItemCard", () => {
         ...entry("in_progress"),
         assignments: [
           assignment({ holderId: "gary", displayName: "Gary", role: "builder" }),
-          assignment({ holderId: "priya", displayName: "Priya", role: "orchestrator" }),
+          assignment({
+            holderId: "priya",
+            holderType: "person",
+            displayName: "Priya",
+            role: "orchestrator",
+          }),
         ],
       };
       const card = ItemCard({ entry: held, needsYou: false, now: 0 });
       expect(findAllByType(card, AgentPresenceDot)).toHaveLength(2);
       const text = textOf(card);
-      expect(text).toContain("Gary");
+      expect(text).toContain("an agent");
       expect(text).toContain("Priya");
+    });
+
+    it("names an agent holder in plain words, never by its crew or session name", () => {
+      // Breaks if: the card goes back to printing `displayName` for an
+      // agent -- the crew name appears in the text and the dot's label.
+      const held: BoardEntry = {
+        ...entry("in_progress"),
+        assignments: [
+          assignment({ holderType: "agent", displayName: "crew-w12", liveness: "running" }),
+        ],
+      };
+      const card = ItemCard({ entry: held, needsYou: false, now: 0 });
+      expect(textOf(card)).toContain("an agent");
+      expect(textOf(card)).not.toContain("crew-w12");
+      const [dot] = findAllByType(card, AgentPresenceDot);
+      expect((dot!.props as { agentName?: string }).agentName).toBe("an agent");
     });
 
     it("renders all four liveness values distinguishably, none folded into another", () => {

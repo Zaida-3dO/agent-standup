@@ -37,6 +37,8 @@ interface Created {
   title: string;
   /** Present only when the title departs from the convention (MILESTONES.md #131). */
   titleAdvice?: string;
+  /** Present only when the headline, body or a subtask's title departs from the people-first rules. */
+  fieldAdvice?: string;
   /** Present only when `projectId` resolved to the inbox catch-all. */
   projectAdvice?: string;
 }
@@ -889,6 +891,185 @@ describeIfDb("explicit create operations", () => {
       expect(updated.title).toBe("Reconcile orders - and refunds - nightly");
       expect(updated.titleAdvice).toBeDefined();
       expect(updated.titleAdvice).toContain("em dash");
+    });
+  });
+
+  // ── The people-first fields: what a person reads on the board ──────────
+  //
+  // Titles, headlines and bodies are answered with notes, never refusals --
+  // the same advisory posture as the title convention above. Each case
+  // pairs a note that must appear with one that must not, so a check that
+  // fires on everything (or nothing) fails here.
+  describe("the people-first fields", () => {
+    it("answers a title with a separator, a date and a codename, and still creates it", async () => {
+      const item = await call(
+        "create_project",
+        base("Home Hub - wave 2 fixes from 2026-10-29", "people-first"),
+      );
+      expect(item.id).toBeTruthy();
+      expect(item.title).toBe("Home Hub - wave 2 fixes from 2026-10-29");
+      expect(item.titleAdvice).toBeDefined();
+      expect(item.titleAdvice).toContain("separator");
+      expect(item.titleAdvice).toContain("date");
+      expect(item.titleAdvice).toContain("codename");
+    });
+
+    it("says nothing about a short plain name with a plain one-sentence headline", async () => {
+      const item = await call("create_project", {
+        ...base("Home Hub", "people-first"),
+        headline: "Furnishing the house with windows, curtains and furniture.",
+      });
+      expect(item.titleAdvice).toBeUndefined();
+      expect(item.fieldAdvice).toBeUndefined();
+    });
+
+    it("flags a headline that repeats the title, and stores it anyway", async () => {
+      const project = await call("create_project", base("Print shop", "people-first"));
+      const item = await call("create_task", {
+        ...base("Production time counts the cards in a pack", "people-first"),
+        headline: "3 Nov #24 - Production time counts the cards in a pack",
+        projectId: project.id,
+      });
+      expect(item.fieldAdvice).toBeDefined();
+      expect(item.fieldAdvice).toContain("repeats the title");
+      // The same headline also carries a date and a request number.
+      expect(item.fieldAdvice).toContain("date");
+      const rows = await prisma.$queryRawUnsafe<{ headline: string }[]>(
+        `SELECT "headline" FROM "Item" WHERE "id" = $1`,
+        item.id,
+      );
+      expect(rows[0]?.headline).toBe("3 Nov #24 - Production time counts the cards in a pack");
+    });
+
+    it("flags a headline that carries an approval quote and a link", async () => {
+      const item = await call("create_project", {
+        ...base("Viewer links", "people-first"),
+        headline: 'Dana said "yes start it please" - see https://example.com/spec for details.',
+      });
+      expect(item.fieldAdvice).toContain("quotes someone");
+      expect(item.fieldAdvice).toContain("web address");
+    });
+
+    it("flags a very large body and says to attach a document, storing the body whole", async () => {
+      const body = "b".repeat(5_000);
+      const item = await call("create_project", { ...base("Big notes", "people-first"), body });
+      expect(item.fieldAdvice).toContain("document");
+      const rows = await prisma.$queryRawUnsafe<{ length: number }[]>(
+        `SELECT length("body")::int AS "length" FROM "Item" WHERE "id" = $1`,
+        item.id,
+      );
+      expect(rows[0]?.length).toBe(5_000);
+    });
+
+    it("stays quiet about a body at an ordinary length", async () => {
+      const item = await call("create_project", {
+        ...base("Ordinary notes", "people-first"),
+        body: "b".repeat(3_000),
+      });
+      expect(item.fieldAdvice).toBeUndefined();
+    });
+
+    it("says a subtask that reads like an implementation step should be a loop", async () => {
+      const project = await call("create_project", base("Admin site", "people-first"));
+      const task = await call("create_task", {
+        ...base("Move the admin page to its own address", "people-first"),
+        projectId: project.id,
+      });
+      const step = await call("create_subtask", {
+        ...base("Split the container ports and the reverse proxy", "people-first"),
+        taskId: task.id,
+      });
+      expect(step.fieldAdvice).toContain("loops");
+      expect(step.fieldAdvice).toContain("parent task");
+
+      const result = await call("create_subtask", {
+        ...base("Show the new address in the sign-in email", "people-first"),
+        taskId: task.id,
+      });
+      expect(result.fieldAdvice).toBeUndefined();
+    });
+
+    it("does not read a TASK's title as an implementation step", async () => {
+      // Only subtasks are checked: a task with a step-shaped title is a
+      // title question, not a "should have been a loop" one.
+      const project = await call("create_project", base("Mailer", "people-first"));
+      const task = await call("create_task", {
+        ...base("Refactor the mailer", "people-first"),
+        projectId: project.id,
+      });
+      expect(task.fieldAdvice).toBeUndefined();
+    });
+
+    it("states the people-first convention in every create's contract", async () => {
+      const { OPERATION_REGISTRY } = await import("@/lib/service/registry");
+      for (const name of ["create_project", "create_task", "create_subtask"]) {
+        const rules = OPERATION_REGISTRY[name as "create_project"].contract?.rules ?? [];
+        const rule = rules.find((r) => r.fields.includes("headline") && r.fields.includes("body"));
+        expect(rule, `${name} states the field convention`).toBeDefined();
+        expect(rule?.rule).toContain("document");
+        expect(rule?.rule).toContain("loops");
+      }
+    });
+
+    describe("on update_item", () => {
+      it("flags a headline edited to repeat the stored title", async () => {
+        const item = await call("create_project", base("Reset flow", "people-first"));
+        const updated = await call("update_item", { id: item.id, headline: "Reset flow" });
+        expect(updated.fieldAdvice).toContain("repeats the title");
+      });
+
+      it("flags a TITLE edited to equal the stored headline", async () => {
+        const item = await call("create_project", {
+          ...base("Reset flow", "people-first"),
+          headline: "Let people reset a forgotten password.",
+        });
+        const updated = await call("update_item", {
+          id: item.id,
+          title: "Let people reset a forgotten password",
+        });
+        expect(updated.fieldAdvice).toContain("repeats the title");
+      });
+
+      it("flags a very large body edit", async () => {
+        const item = await call("create_project", base("Notes holder", "people-first"));
+        const updated = await call("update_item", { id: item.id, body: "b".repeat(5_000) });
+        expect(updated.fieldAdvice).toContain("document");
+      });
+
+      it("flags a title edit with a version number", async () => {
+        const item = await call("create_project", base("Release prep", "people-first"));
+        const updated = await call("update_item", {
+          id: item.id,
+          title: "Ship the 0.6.3 health fixes",
+        });
+        expect(updated.titleAdvice).toContain("version");
+      });
+
+      it("says nothing when the edit touches neither title, headline nor body", async () => {
+        // A stored headline that repeats the title is NOT re-reported on an
+        // unrelated edit: only the fields this call wrote are examined.
+        const item = await call("create_project", {
+          ...base("Reset flow", "people-first"),
+          headline: "Reset flow",
+        });
+        const updated = await call("update_item", { id: item.id, priority: "P1" });
+        expect(updated.fieldAdvice).toBeUndefined();
+        expect(updated.titleAdvice).toBeUndefined();
+      });
+
+      it("says nothing for a plain edit, and nothing when the headline is cleared", async () => {
+        const item = await call("create_project", {
+          ...base("Reset flow", "people-first"),
+          headline: "Let people reset a forgotten password.",
+        });
+        const plain = await call("update_item", {
+          id: item.id,
+          headline: "People can reset a password without asking for help.",
+        });
+        expect(plain.fieldAdvice).toBeUndefined();
+        const cleared = await call("update_item", { id: item.id, headline: null });
+        expect(cleared.fieldAdvice).toBeUndefined();
+      });
     });
   });
 

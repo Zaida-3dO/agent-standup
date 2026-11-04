@@ -55,6 +55,7 @@ import { VerdictBadge } from "./VerdictBadge";
 import { TrustBadge } from "@/components/chips/TrustBadge";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { RepoChip } from "@/components/chips/RepoChip";
+import { showRepoTag } from "@/lib/design/repo-tag";
 import { LinkChips } from "@/components/chips/LinkChips";
 import { VerifyStateAction, type VerifyStateStatus } from "./VerifyStateAction";
 import { TabStrip, tabControlId, tabPanelId } from "./TabStrip";
@@ -393,7 +394,7 @@ export function ItemDetailView({
           >
             <AreaChip area={item.area} />
           </ChipLink>
-          {item.repo !== null && (
+          {showRepoTag(item.area, item.repo) && (
             <ChipLink
               href={boardLinkFor("repo", item.repo)}
               label={`Filter the board by repo: ${item.repo}`}

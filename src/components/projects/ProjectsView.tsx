@@ -43,8 +43,13 @@ export function ProjectsView({
     );
   }
 
-  const { projects, childlessCount } = loadState.payload;
+  const { projects } = loadState.payload;
   const ordered = sortProjects(projects);
+  // Projects with nothing under them are normal, not a fault, so they sit in
+  // their own quiet section below the rest — the way finished work is set
+  // apart — rather than leading the page or carrying a warning.
+  const active = ordered.filter((project) => !project.childless);
+  const notStarted = ordered.filter((project) => project.childless);
 
   return (
     <div className={styles.page}>
@@ -57,15 +62,6 @@ export function ProjectsView({
           <span className={styles.count} data-project-count={ordered.length}>
             {ordered.length} {ordered.length === 1 ? "project" : "projects"}
           </span>
-          {childlessCount > 0 && (
-            // Surfaced at the top rather than left to be discovered by
-            // scrolling: this is a structural problem with the data, and a
-            // reader should learn how much of the page is affected before
-            // they start reading it as a status report.
-            <span className={styles.suspectCount} data-childless-count={childlessCount}>
-              {childlessCount} with no work under {childlessCount === 1 ? "it" : "them"}
-            </span>
-          )}
           {onToggleCompleted !== undefined && (
             <button type="button" className={styles.toggle} onClick={onToggleCompleted}>
               {includeCompleted === true ? "Hide finished" : "Show finished"}
@@ -79,11 +75,27 @@ export function ProjectsView({
         // this is the empty one, said plainly.
         <p className={styles.empty}>No projects to show.</p>
       ) : (
-        <div className={styles.grid}>
-          {ordered.map((project) => (
-            <ProjectCard key={project.id} project={project} now={now} />
-          ))}
-        </div>
+        <>
+          {active.length > 0 && (
+            <div className={styles.grid}>
+              {active.map((project) => (
+                <ProjectCard key={project.id} project={project} now={now} />
+              ))}
+            </div>
+          )}
+          {notStarted.length > 0 && (
+            <section className={styles.quietSection} data-section="not-started">
+              <h2 className={styles.quietHeading} data-not-started-count={notStarted.length}>
+                {`Not started (${notStarted.length})`}
+              </h2>
+              <div className={styles.grid}>
+                {notStarted.map((project) => (
+                  <ProjectCard key={project.id} project={project} now={now} />
+                ))}
+              </div>
+            </section>
+          )}
+        </>
       )}
     </div>
   );

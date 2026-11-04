@@ -4,20 +4,21 @@
 // calls it as a function and inspects the element tree it returns
 // (`tests/helpers/react-element.ts`).
 //
-// **The card's job is to be honest about a project whose data is broken.**
-// Roughly half the projects in a real store have no children at all — a
-// bulk import from a store with no project/task distinction types every
-// root it loads as a project — and the failure mode this card is shaped
-// against is rendering one of those as "0% complete", which asserts that
-// work exists and none of it is done. Both halves of that are false. So a
-// childless project gets a flag and an explicit *no work under this yet*,
-// never a progress bar at zero.
+// **The card's job is to be honest about a project with nothing under it.**
+// An empty project is a normal state — it simply has not been started — and
+// the failure mode this card is shaped against is rendering one as "0%
+// complete", which asserts that work exists and none of it is done. Both
+// halves of that are false. So a childless project says, quietly, that it is
+// not started: no progress bar at zero, and no warning either, because an
+// empty project needs nothing from the reader.
 import Link from "next/link";
 import type { ProjectRollup } from "@/lib/projects/types";
 import { bandsOf, countsOf, liveCrewCount, progressOf, relativeTime } from "@/lib/projects/view";
 import { projectBoardHref } from "@/lib/board/filters";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { RepoChip } from "@/components/chips/RepoChip";
+import { showRepoTag } from "@/lib/design/repo-tag";
+import { holderLabel, holdersLabel } from "@/lib/design/holder-label";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import styles from "./Projects.module.css";
 
@@ -42,7 +43,7 @@ export function ProjectCard({ project, now }: ProjectCardProps) {
 
   return (
     <article
-      className={`${styles.card}${project.childless ? ` ${styles.cardSuspect}` : ""}`}
+      className={`${styles.card}${project.childless ? ` ${styles.cardQuiet}` : ""}`}
       data-project-id={project.id}
       // Read by the tests, and the honest summary of the card's whole
       // reason for existing in this shape.
@@ -72,7 +73,7 @@ export function ProjectCard({ project, now }: ProjectCardProps) {
             // The count is the number; the label is what makes it mean
             // something to a reader who cannot see the dot beside it.
             aria-label={`${crew} live ${crew === 1 ? "agent" : "agents"} on this project`}
-            title={project.assignments.map((a) => a.displayName).join(", ")}
+            title={holdersLabel(project.assignments)}
           >
             <span className={styles.crewDot} aria-hidden="true" />
             {crew}
@@ -86,23 +87,14 @@ export function ProjectCard({ project, now }: ProjectCardProps) {
       )}
 
       {project.childless ? (
-        // **Not a bar at zero.** See the module header — this is the whole
-        // honesty requirement, and it is a different sentence rather than a
+        // **Not a bar at zero, and not a warning.** See the module header —
+        // the honesty requirement is a different sentence rather than a
         // different value, because the number 0 cannot say "there is
-        // nothing here" no matter how it is styled.
-        <p className={styles.suspect} data-suspect-reason="no-children">
-          <span className={styles.suspectBadge}>Needs attention</span>
-          <span className={styles.suspectText}>
-            No work under this project yet — it cannot show progress or be completed until it has
-            children.{" "}
-            {/* The flag now leads somewhere. A condition a reader can see and
-                cannot act on teaches them to ignore the flag; the project
-                page carries the two repairs, and — just as importantly —
-                what those repairs will and will not achieve. */}
-            <Link href={`/projects/${project.id}`} className={styles.suspectLink}>
-              Repair it
-            </Link>
-          </span>
+        // nothing here" no matter how it is styled. Nothing is wrong with a
+        // project that has nothing under it, so it carries no badge and no
+        // repair link.
+        <p className={styles.notStarted} data-project-status="not-started">
+          Not started yet.
         </p>
       ) : (
         <div className={styles.progressBlock}>
@@ -152,7 +144,7 @@ export function ProjectCard({ project, now }: ProjectCardProps) {
 
       <div className={styles.meta}>
         <AreaChip area={project.area} />
-        {project.repo !== null && <RepoChip repo={project.repo} />}
+        {showRepoTag(project.area, project.repo) && <RepoChip repo={project.repo} />}
         <span className={styles.activity}>{relativeTime(project.lastActivity, now)}</span>
       </div>
 
@@ -166,8 +158,11 @@ export function ProjectCard({ project, now }: ProjectCardProps) {
         <ul className={styles.projectPresence}>
           {project.assignments.map((assignment) => (
             <li key={`${assignment.holderId}-${assignment.role}`} className={styles.presenceRow}>
-              <AgentPresenceDot liveness={assignment.liveness} agentName={assignment.displayName} />
-              <span className={styles.presenceName}>{assignment.displayName}</span>
+              <AgentPresenceDot
+                liveness={assignment.liveness}
+                agentName={holderLabel(assignment)}
+              />
+              <span className={styles.presenceName}>{holderLabel(assignment)}</span>
               <span className={styles.presenceAge}>{relativeTime(assignment.lastActive, now)}</span>
             </li>
           ))}

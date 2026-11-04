@@ -27,6 +27,7 @@ import { callerEventActor } from "./event-attribution";
 import { appendEvent } from "@/lib/events";
 import { normalizeEmDashNoting } from "@/lib/text-normalize";
 import { titleAdviceFor, TITLE_CONVENTION_RULE } from "@/lib/item-title";
+import { fieldAdviceFor, FIELD_CONVENTION_RULE } from "@/lib/item-field-advice";
 import {
   HEADLINE_MAX_CHARS,
   ITEM_COLUMNS,
@@ -308,6 +309,10 @@ export const COMMON_CREATE_RULES = [
       "than trim to fit. The cap is enforced but not visible in the schema (a bare capped string), " +
       "so this is the only place it is stated before you are refused for it.",
   },
+  {
+    fields: ["headline", "body"],
+    rule: FIELD_CONVENTION_RULE,
+  },
 ] as const;
 
 /** The parsed common fields, as every create operation's handler receives them. */
@@ -457,6 +462,15 @@ export interface CreatedItem extends ItemRecord {
    */
   readonly titleAdvice?: string;
   /**
+   * A note on the other fields a person reads — the headline, the body, and a
+   * subtask whose title reads like an implementation step.
+   *
+   * Same posture as `titleAdvice`: advice about THIS call, absent when there
+   * is nothing to say, never stored on the row, and the create succeeds
+   * either way.
+   */
+  readonly fieldAdvice?: string;
+  /**
    * A note that this create resolved `projectId` to the configured
    * catch-all (inbox) project — set only by `create_task`, the one caller
    * that can resolve the sentinel, and carried through by `create_work`'s
@@ -556,6 +570,8 @@ export interface CreatedWriteRecord extends ItemWriteRecord {
   readonly mergeAuthority: ItemRecord["mergeAuthority"];
   /** See `CreatedItem.titleAdvice` — carried through, since it is about this call. */
   readonly titleAdvice?: string;
+  /** See `CreatedItem.fieldAdvice` — carried through, since it is about this call. */
+  readonly fieldAdvice?: string;
   /** See `CreatedItem.projectAdvice` — carried through, since it is about this call. */
   readonly projectAdvice?: string;
 }
@@ -587,6 +603,7 @@ export function toCreatedWriteRecord(record: CreatedItem): CreatedWriteRecord {
     // Spread conditionally, so an item whose title is fine carries no key —
     // the same posture `insertItem` uses when it attaches the advice.
     ...(record.titleAdvice === undefined ? {} : { titleAdvice: record.titleAdvice }),
+    ...(record.fieldAdvice === undefined ? {} : { fieldAdvice: record.fieldAdvice }),
     ...(record.projectAdvice === undefined ? {} : { projectAdvice: record.projectAdvice }),
   };
 }
@@ -837,5 +854,20 @@ export async function insertItem(
   // cleaner "nothing to say" than a present empty value.
   const record = toItemRecord(row);
   const advice = titleAdviceFor(record.title, "title", titleWasRewritten);
-  return advice === null ? record : { ...record, titleAdvice: advice };
+  // The other fields a person reads, answered the same way and for the same
+  // reason (people-first board). A subtask's title is also read for the
+  // shape of an implementation step: the board shows results, and steps are
+  // loops on the task.
+  const fieldAdvice = fieldAdviceFor({
+    headline: record.headline,
+    body: record.body,
+    repeatCheck: { title: record.title, headline: record.headline },
+    ...(record.kind === "subtask" ? { subtaskTitle: record.title } : {}),
+  });
+  if (advice === null && fieldAdvice === null) return record;
+  return {
+    ...record,
+    ...(advice === null ? {} : { titleAdvice: advice }),
+    ...(fieldAdvice === null ? {} : { fieldAdvice }),
+  };
 }
