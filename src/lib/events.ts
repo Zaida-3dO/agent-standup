@@ -251,6 +251,7 @@ export async function readSinceBounded(
     readonly limit?: number;
     readonly full: true;
     readonly withNewestId?: boolean;
+    readonly types?: readonly string[];
   },
 ): Promise<{ events: EventRow[]; horizon: bigint; newestId: bigint | null }>;
 export async function readSinceBounded(
@@ -260,6 +261,7 @@ export async function readSinceBounded(
     readonly limit?: number;
     readonly full?: false;
     readonly withNewestId?: boolean;
+    readonly types?: readonly string[];
   },
 ): Promise<{ events: SlimEventRow[]; horizon: bigint; newestId: bigint | null }>;
 export async function readSinceBounded(
@@ -269,6 +271,7 @@ export async function readSinceBounded(
     readonly limit?: number;
     readonly full?: boolean;
     readonly withNewestId?: boolean;
+    readonly types?: readonly string[];
   },
 ): Promise<{ events: (EventRow | SlimEventRow)[]; horizon: bigint; newestId: bigint | null }> {
   const horizon = await visibilityHorizon(db);
@@ -279,15 +282,22 @@ export async function readSinceBounded(
   // should be the safe one. `orientation` passes `full: true` explicitly
   // because its "what changed" list renders the payload.
   const full = args.full ?? false;
+  // An optional type filter, applied in the `WHERE` so `limit` counts only
+  // the rows asked for. The caller supplies the names as one bound array and
+  // the cast to the enum happens in Postgres; the operation layer has
+  // already checked them against the enum's labels, so a name that is not an
+  // event type never reaches here. An absent or empty list means every type.
+  const types = args.types !== undefined && args.types.length > 0 ? [...args.types] : null;
   const rows = await db.$queryRawUnsafe<(EventRow | SlimEventRow)[]>(
     `SELECT ${eventColumnsFor(full)}
      FROM "Event"
-     WHERE "id" > $1 AND "txId" < $2
+     WHERE "id" > $1 AND "txId" < $2${types === null ? "" : ` AND "type" = ANY($4::text[]::"EventType"[])`}
      ORDER BY "id" ASC
      LIMIT $3`,
     args.since,
     horizon,
     limit,
+    ...(types === null ? [] : [types]),
   );
 
   // The newest id under the *same* visibility bound the slice used. Bounded

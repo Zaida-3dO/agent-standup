@@ -89,6 +89,45 @@ describe("buildOvernightReport", () => {
     expect(report.deadOrStalledNow).toBe(2);
   });
 
+  it("reports dead or stalled as unknown (null), not zero, when the live assignments were not read", () => {
+    const report = buildOvernightReport(SINCE, [], costs(), null);
+    expect(report.deadOrStalledNow).toBeNull();
+    // A genuinely empty list is a real zero, and stays distinct from unknown.
+    expect(buildOvernightReport(SINCE, [], costs(), []).deadOrStalledNow).toBe(0);
+  });
+
+  it("flags spend as unavailable when the costs read was not made, and not when it simply priced nothing", () => {
+    const failed = buildOvernightReport(SINCE, [], null, []);
+    expect(failed.cost).toBeNull();
+    expect(failed.costUnavailable).toBe(true);
+
+    const unpriced = buildOvernightReport(SINCE, [], costs(), []);
+    expect(unpriced.cost).toBeNull();
+    expect(unpriced.costUnavailable).toBe(false);
+  });
+
+  it("still counts merges and blocks when costs and assignments were unavailable", () => {
+    const events = [
+      event({ id: "1", type: "merge", ts: "2026-08-18T05:00:00.000Z" }),
+      event({
+        id: "2",
+        type: "state_change",
+        payload: { from: "executing", to: "blocked" },
+        ts: "2026-08-18T06:00:00.000Z",
+      }),
+    ];
+    const report = buildOvernightReport(SINCE, events, null, null);
+    expect(report.merged).toHaveLength(1);
+    expect(report.newlyBlocked).toHaveLength(1);
+  });
+
+  it("does not count a state_change that arrived slim (no payload) as a block", () => {
+    const slim = event({ id: "2", type: "state_change", ts: "2026-08-18T06:00:00.000Z" });
+    delete (slim as { payload?: unknown }).payload;
+    const report = buildOvernightReport(SINCE, [slim], costs(), []);
+    expect(report.newlyBlocked).toHaveLength(0);
+  });
+
   it("sums recomputed cost across groups", () => {
     const payload = costs({
       groups: [

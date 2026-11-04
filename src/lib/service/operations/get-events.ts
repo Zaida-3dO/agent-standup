@@ -73,6 +73,7 @@ import { z } from "zod";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import { readSinceBounded, type EventRow } from "@/lib/events";
+import { InvalidInputError } from "../errors";
 
 /**
  * The slice bound.
@@ -85,6 +86,12 @@ import { readSinceBounded, type EventRow } from "@/lib/events";
  */
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+
+/**
+ * How many distinct event types one call may name. The ledger has fewer than
+ * thirty kinds, so a longer list is a mistake rather than a filter.
+ */
+const MAX_TYPES = 30;
 
 const inputSchema = z
   .object({
@@ -122,6 +129,21 @@ const inputSchema = z
      * bounded row count, and on this table that was never the same thing.
      */
     full: z.boolean().default(false),
+    /**
+     * Only events of these types. Absent means every type.
+     *
+     * Applied in the query itself, so `limit` counts only the types asked
+     * for and the cursor still points at a real position in the ledger. Its
+     * reason to exist is `full`: a caller that needs the heavy shape for one
+     * kind of event (the Standup overnight report reads `state_change` in
+     * full) can ask for exactly that kind rather than paying the heavy shape
+     * for the whole slice.
+     *
+     * Not a `z.enum`: the set of types grows, and a copy here would go stale.
+     * The names are checked against the database's own list at call time
+     * instead, and a name that is not an event type is refused by name.
+     */
+    types: z.array(z.string().min(1)).min(1).max(MAX_TYPES).optional(),
   })
   .strict();
 
@@ -195,6 +217,26 @@ interface RawTitleRow {
   title: string;
 }
 
+/**
+ * Refuses a type filter that names something that is not an event type.
+ *
+ * The valid names are read from the enum in Postgres rather than listed
+ * here, so a newly added event type is accepted the day it exists. Without
+ * this check an unknown name would reach the `::"EventType"` cast and come
+ * back as an internal database error with no hint of what was wrong.
+ */
+async function assertKnownEventTypes(ctx: ServiceContext, types: readonly string[]): Promise<void> {
+  const rows = await ctx.db.$queryRawUnsafe<{ label: string }[]>(
+    `SELECT unnest(enum_range(NULL::"EventType"))::text AS "label"`,
+  );
+  const known = new Set(rows.map((row) => row.label));
+  const unknown = types.filter((type) => !known.has(type));
+  if (unknown.length === 0) return;
+  throw new InvalidInputError(
+    `Unknown event type${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}. Valid types are: ${[...known].sort().join(", ")}.`,
+  );
+}
+
 // Stryker disable all : this metadata is a module-level literal, read into
 // the registry at import — before any test body runs and never re-evaluated
 // — so a mutation here is unkillable by construction, NOT untested.
@@ -205,11 +247,13 @@ export const getEvents = defineOperation({
   name: "get_events",
   kind: "read",
   summary:
-    "Since your last visit: a bounded slice of the events ledger with per-profile read state. Returns id, timestamp, type, item and seen state only — pass full for each event's payload and body. Pass since to page, personId to resolve whose read state, unseenOnly for just what is new.",
+    "Since your last visit: a bounded slice of the events ledger with per-profile read state. Returns id, timestamp, type, item and seen state only — pass full for each event's payload and body. Pass since to page, personId to resolve whose read state, unseenOnly for just what is new, types to read only some event types (for example state_change with full).",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetEventsInput): Promise<GetEventsOutput> {
     const since = input.since !== undefined ? BigInt(input.since) : 0n;
+    const types = input.types !== undefined ? [...new Set(input.types)] : undefined;
+    if (types !== undefined) await assertKnownEventTypes(ctx, types);
     // The projection is chosen in the SQL, not stripped afterwards: mapping
     // a full row and then dropping two fields would return the same bytes
     // to the caller while still reading every byte out of Postgres, which
@@ -223,8 +267,9 @@ export const getEvents = defineOperation({
           limit: input.limit,
           full: true,
           withNewestId: true,
+          types,
         })
-      : await readSinceBounded(ctx.db, { since, limit: input.limit, withNewestId: true });
+      : await readSinceBounded(ctx.db, { since, limit: input.limit, withNewestId: true, types });
 
     // Read state for exactly the events in this slice — one query keyed on
     // the ids already in hand, rather than a join inside `readSinceBounded`.

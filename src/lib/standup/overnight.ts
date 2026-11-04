@@ -53,10 +53,21 @@ export interface OvernightReport {
    * How many assignments are dead or stalled as of this read — a live
    * count, not an overnight delta. See the module header for why the delta
    * is not available.
+   *
+   * `null` when the live assignments could not be read: unknown is not zero,
+   * and showing "0 dead or stalled" because a read failed is the confident
+   * wrong answer this report is careful to avoid elsewhere.
    */
-  readonly deadOrStalledNow: number;
+  readonly deadOrStalledNow: number | null;
   /** Recomputed spend since the cutoff, or null when nothing in the window could be priced. */
   readonly cost: number | null;
+  /**
+   * True when the costs read itself failed, as opposed to succeeding with
+   * nothing priceable. Both leave `cost` null, and they need different
+   * sentences: "no run in this window" is a fact about the data, "could not
+   * be loaded" is a fact about the read.
+   */
+  readonly costUnavailable: boolean;
   /**
    * True when the events slice this was built from may have run out before
    * reaching `since` — the merged/newlyBlocked counts are then a floor, not
@@ -69,11 +80,12 @@ export interface OvernightReport {
 /**
  * An event whose `state_change` payload moved the item TO `to`.
  *
- * Requires `event.payload` to be present, which means this report's own
- * events fetch must ask for `full: true` (see `fetchStandup` in
- * `state.ts`) — the slim default (`SinceEvent`'s own header) does not
- * carry `payload` at all, and an event missing it can never match here
- * rather than being misread as "not a state change".
+ * Requires `event.payload` to be present. The report reads events slim and
+ * fetches `state_change` events alone in full (`fetchStandup` in `state.ts`
+ * asks `get_events` for `types: ["state_change"]` with `full`), then swaps
+ * those into the slim slice. The slim default (`SinceEvent`'s own header)
+ * carries no `payload`, and an event missing it can never match here rather
+ * than being misread as "not a state change".
  */
 function movedTo(event: SinceEvent, to: string): boolean {
   return event.type === "state_change" && event.payload?.to === to;
@@ -97,8 +109,8 @@ function movedTo(event: SinceEvent, to: string): boolean {
 export function buildOvernightReport(
   since: string,
   events: readonly SinceEvent[],
-  costs: CostsPayload,
-  liveAssignments: readonly BoardAssignment[],
+  costs: CostsPayload | null,
+  liveAssignments: readonly BoardAssignment[] | null,
 ): OvernightReport {
   const cutoff = Date.parse(since);
   const inWindow = events.filter((event) => {
@@ -114,16 +126,20 @@ export function buildOvernightReport(
     else if (movedTo(event, "blocked")) newlyBlocked.push(line);
   }
 
-  const deadOrStalledNow = liveAssignments.filter(
-    (assignment) => assignment.liveness === "dead" || assignment.liveness === "stalled",
-  ).length;
+  const deadOrStalledNow =
+    liveAssignments === null
+      ? null
+      : liveAssignments.filter(
+          (assignment) => assignment.liveness === "dead" || assignment.liveness === "stalled",
+        ).length;
 
   return {
     since,
     merged,
     newlyBlocked,
     deadOrStalledNow,
-    cost: totalCost(costs),
+    cost: costs === null ? null : totalCost(costs),
+    costUnavailable: costs === null,
     // Whether the window this report claims to cover was actually reached.
     //
     // The question is only ever "does the slice reach back to the cutoff",

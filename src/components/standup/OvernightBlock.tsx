@@ -58,7 +58,7 @@ export function OvernightBlock({ report, now }: OvernightBlockProps) {
         </div>
         <div className={styles.stat}>
           <dt>Dead or stalled now</dt>
-          <dd data-stat="dead-stalled">{report.deadOrStalledNow}</dd>
+          <dd data-stat="dead-stalled">{report.deadOrStalledNow ?? "—"}</dd>
         </div>
         <div className={styles.stat}>
           <dt>Spend</dt>
@@ -76,7 +76,17 @@ export function OvernightBlock({ report, now }: OvernightBlockProps) {
           .
         </p>
       )}
-      {cost === null && (
+      {report.costUnavailable && (
+        <p className={styles.overnightNote}>
+          Spend could not be loaded just now, so it shows &ldquo;&mdash;&rdquo;.
+        </p>
+      )}
+      {report.deadOrStalledNow === null && (
+        <p className={styles.overnightNote}>
+          The count of dead or stalled assignments could not be loaded just now.
+        </p>
+      )}
+      {cost === null && !report.costUnavailable && (
         <p className={styles.overnightNote}>
           Spend shows &ldquo;&mdash;&rdquo; because there was either no run in this window or none
           of it could be priced (no rate configured for the models used).
