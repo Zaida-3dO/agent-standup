@@ -48,6 +48,13 @@ export function StuckPanel({ view, onRetry }: StuckPanelProps) {
           </li>
         ))}
       </ul>
+      {view.more > 0 && (
+        <div className={styles.panelFoot}>
+          <Link href="/board" className={styles.footLink}>
+            {view.more} more on the board <span aria-hidden="true">→</span>
+          </Link>
+        </div>
+      )}
     </section>
   );
 }

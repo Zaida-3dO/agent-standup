@@ -103,7 +103,10 @@ describeIfDb("a board card counts the work beneath it", () => {
    * what these cases want — a subtask's own card has a rollup too, and
    * every fixture below is asserted about directly.
    */
-  async function entriesByArea(area: string): Promise<Map<string, BoardEntry>> {
+  async function entriesByArea(
+    area: string,
+    withContext = false,
+  ): Promise<Map<string, BoardEntry>> {
     const columns = ["backlog", "in_progress", "waiting", "completed"] as const;
     const results = await Promise.all(
       columns.map(
@@ -113,6 +116,7 @@ describeIfDb("a board card counts the work beneath it", () => {
             column,
             limit: 200,
             includeTerminal: true,
+            withContext,
           }) as Promise<BoardOutput>,
       ),
     );
@@ -130,7 +134,11 @@ describeIfDb("a board card counts the work beneath it", () => {
    * counted from the query log, so it measures what reached Postgres rather
    * than what the code intended to send.
    */
-  async function countStatements(area: string, marker: string): Promise<number> {
+  async function countStatements(
+    area: string,
+    marker: string,
+    withContext = false,
+  ): Promise<number> {
     let seen = 0;
     const listener = (event: { query: string }) => {
       if (event.query.includes(marker)) seen++;
@@ -147,6 +155,7 @@ describeIfDb("a board card counts the work beneath it", () => {
       area,
       column: "backlog",
       limit: 200,
+      withContext,
     });
     await logged.$disconnect();
     return seen;
@@ -323,7 +332,7 @@ describeIfDb("a board card counts the work beneath it", () => {
         title: "Orphan child",
         parentId: orphanTask.id,
       });
-      const entries = await entriesByArea("root-project-shape");
+      const entries = await entriesByArea("root-project-shape", true);
 
       const project = { id: ids.project, title: "Project" };
       // Fails if the walk stops at the first parent: the task alone would
@@ -335,16 +344,38 @@ describeIfDb("a board card counts the work beneath it", () => {
       expect(entries.get(ids.project)?.item.project).toBeNull();
       expect(entries.get(orphanTask.id)?.item.project).toBeNull();
       expect(entries.get(orphanChild.id)?.item.project).toBeNull();
+
+      // `withContext` also adds the item's last change, as ISO text.
+      const stored = await prisma.$queryRawUnsafe<{ updatedAt: Date }[]>(
+        `SELECT "updatedAt" FROM "Item" WHERE "id" = $1`,
+        ids.task,
+      );
+      expect((entries.get(ids.task)?.item as { updatedAt?: string }).updatedAt).toBe(
+        stored[0]!.updatedAt.toISOString(),
+      );
+    });
+
+    it("adds neither project nor updatedAt, and walks no project, unless withContext is passed", async () => {
+      const ids = await chain("root-project-default");
+      const entries = await entriesByArea("root-project-default");
+
+      // Fails if either key is added unconditionally: the default board has
+      // no room for them (`bounded-reads.test.ts`).
+      const item = entries.get(ids.task)!.item;
+      expect("project" in item).toBe(false);
+      expect("updatedAt" in item).toBe(false);
+      expect("project" in entries.get(ids.project)!.item).toBe(false);
+      expect(await countStatements("root-project-default", "root_project_walk")).toBe(0);
     });
 
     it("resolves every project in one statement, however many cards there are", async () => {
       await chain("root-project-n1-small");
-      const small = await countStatements("root-project-n1-small", "root_project_walk");
+      const small = await countStatements("root-project-n1-small", "root_project_walk", true);
 
       for (let index = 0; index < 6; index++) {
         await chain("root-project-n1-large");
       }
-      const large = await countStatements("root-project-n1-large", "root_project_walk");
+      const large = await countStatements("root-project-n1-large", "root_project_walk", true);
 
       // Fails if the lookup moves inside the entry loop: `large` grows with
       // the card count while `small` stays at one.

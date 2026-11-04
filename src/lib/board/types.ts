@@ -47,9 +47,9 @@ export interface BoardItem {
   readonly headline: string | null;
   readonly kind: "project" | "task" | "subtask";
   /**
-   * ISO 8601 of the item's last change, when the read carries it. Optional
-   * because the board's slim item does not send it on every server: the
-   * Standup's Stuck rows show an age when it is here and none when it is not.
+   * ISO 8601 of the item's last change. Present when the read asked for
+   * `withContext`; the Standup's Stuck rows show an age when it is here and
+   * none when it is not.
    */
   readonly updatedAt?: string;
   /**
@@ -79,8 +79,8 @@ export interface BoardItem {
    * The project this item belongs to — its top-level ancestor of kind
    * `project` — or `null` for a project itself or an orphan.
    *
-   * Optional for the same reason `links` is: the wire is mirrored by hand,
-   * and an absent value reads as `null`.
+   * Present when the read asked for `withContext`; an absent value reads as
+   * `null`.
    */
   readonly project?: { readonly id: string; readonly title: string } | null;
 }

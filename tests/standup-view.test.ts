@@ -15,11 +15,15 @@ import type { OvernightLine, OvernightReport } from "@/lib/standup/overnight";
 import type { ColumnRead, SectionState, StandupData } from "@/lib/standup/state";
 import {
   MAX_DONE_ROWS,
+  MAX_NEEDS_YOU_ROWS,
   MAX_PROJECT_CARDS,
+  MAX_STUCK_ROWS,
   barOf,
   buildSentence,
   buildStandupView,
   dateLine,
+  everySectionFailed,
+  pageErrorMessage,
   shortDuration,
   type SentenceInput,
   type StandupView,
@@ -356,7 +360,7 @@ describe("the sentence", () => {
 
   it("names the evening the window opened on, by the clock", () => {
     expect(viewOf().sinceLabel).toBe("yesterday evening");
-    // After 18:00 the cutoff is today at 18:00, which is not yesterday.
+    // After 18:00 the cutoff is 18:00 on the same day, not the day before.
     const evening = new Date(2026, 7, 19, 20, 30).getTime();
     const view = viewOf({ overnight: loadedOf(report({ merged: [line()] })) }, evening);
     expect(view.sinceLabel).toBe("this evening");
@@ -379,10 +383,14 @@ describe("agents and projects in the sentence", () => {
           // The same agent on a second item in the same project: still one agent.
           live("b", RECIPE, holder({ holderId: "agent-1" })),
           live("c", GARDEN, holder({ holderId: "agent-2" })),
+          // An item that arrived on a second page is one item, not two.
+          live("c", GARDEN, holder({ holderId: "agent-2" })),
         ]),
       ),
+      projects: loadedOf({ projects: [rollup(GARDEN.id)], childlessCount: 0 }),
     });
     expect(view.sentence.text).toContain("2 agents are working across 2 projects");
+    expect(projectsOf(view).cards[0]!.liveItems).toHaveLength(1);
   });
 
   it("counts two holders on one item as two agents but one live item", () => {
@@ -431,19 +439,6 @@ describe("agents and projects in the sentence", () => {
     });
     expect(view.sentence.text).toContain("1+ agents are working across 1+ projects");
   });
-
-  it("counts an item that arrived on two pages once", () => {
-    const view = viewOf({
-      inProgress: loadedOf(
-        column([
-          live("a", RECIPE, holder({ holderId: "agent-1" })),
-          live("a", RECIPE, holder({ holderId: "agent-1" })),
-        ]),
-      ),
-      projects: loadedOf({ projects: [rollup(RECIPE.id)], childlessCount: 0 }),
-    });
-    expect(projectsOf(view).cards[0]!.liveItems).toHaveLength(1);
-  });
 });
 
 // ── Needs you ───────────────────────────────────────────────────────────
@@ -475,8 +470,8 @@ describe("Needs you rows", () => {
           }),
         }),
       ).rows[0]!;
-    expect(row("Which bank first: Monzo or Starling?").ask).toBe(
-      "Which bank first: Monzo or Starling?",
+    expect(row("Which file format first: the spreadsheet or the PDF?").ask).toBe(
+      "Which file format first: the spreadsheet or the PDF?",
     );
     expect(row("   ").ask).toBe("Someone is waiting on an answer from you.");
     expect(row(null).ask).toBe("Someone is waiting on an answer from you.");
@@ -557,6 +552,25 @@ describe("Needs you rows", () => {
     expect(rows[0]!.project).toEqual(RECIPE);
   });
 
+  it("draws the five oldest waits, but counts and badges every one", () => {
+    const seven = Array.from({ length: 7 }, (_, i) =>
+      needs({ id: `n${i}`, updatedAt: ago((i + 1) * H), project: RECIPE }),
+    );
+    const view = viewOf({
+      needsYou: loadedOf({ items: seven, total: 7 }),
+      projects: loadedOf({ projects: [rollup(RECIPE.id)], childlessCount: 0 }),
+    });
+    const { rows, total, hasMore } = needsOf(view);
+    // Killed by dropping the cap, by capping before sorting, or by counting
+    // the rows drawn instead of the items that need the reader.
+    expect(rows.map((row) => row.id)).toEqual(["n6", "n5", "n4", "n3", "n2"]);
+    expect(rows).toHaveLength(MAX_NEEDS_YOU_ROWS);
+    expect(total).toBe(7);
+    expect(hasMore).toBe(true);
+    expect(view.sentence.text).toMatch(/^7 things need you\./);
+    expect(projectsOf(view).cards[0]!.needsYouBadge).toBe("7 need you");
+  });
+
   it("is quiet at zero, and says when the server holds more than the rows shown", () => {
     const quiet = needsOf(viewOf());
     expect(quiet).toMatchObject({ quiet: true, total: 0, hasMore: false, rows: [] });
@@ -584,19 +598,17 @@ describe("Stuck", () => {
   const progress = (...entries: BoardEntry[]) => ({ inProgress: loadedOf(column(entries)) });
   const ids = (view: StandupView) => stuckOf(view).rows.map((row) => row.id);
 
-  it("lists an item blocked on something outside, with the reason, project and age", () => {
-    const view = viewOf(
-      wait(
-        blocked({
-          id: "ext",
-          title: "Open the frame from the hub",
-          blockedOnType: "external_process",
-          blockedReason: "Waiting for the upstream maintainers to review the change.",
-          project: GARDEN,
-          updatedAt: ago(4 * DAY),
-        }),
-      ),
-    );
+  it("lists an item blocked on something outside, with the reason, project and age, once", () => {
+    const outside = blocked({
+      id: "ext",
+      title: "Open the frame from the hub",
+      blockedOnType: "external_process",
+      blockedReason: "Waiting for the upstream maintainers to review the change.",
+      project: GARDEN,
+      updatedAt: ago(4 * DAY),
+    });
+    // The same item arriving on two pages is listed once.
+    const view = viewOf(wait(outside, outside));
     expect(stuckOf(view).rows).toEqual([
       {
         id: "ext",
@@ -714,16 +726,6 @@ describe("Stuck", () => {
     expect(ids(view)).toEqual([]);
   });
 
-  it("lists an item once even when it arrives on two pages", () => {
-    const view = viewOf(
-      wait(
-        blocked({ id: "dup", blockedOnType: "time" }),
-        blocked({ id: "dup", blockedOnType: "time" }),
-      ),
-    );
-    expect(ids(view)).toEqual(["dup"]);
-  });
-
   it("puts the longest-stuck first and an unknown age last", () => {
     const view = viewOf({
       ...wait(
@@ -733,6 +735,29 @@ describe("Stuck", () => {
       ...progress(entry({ id: "hours" }, [holder({ liveness: "dead", lastActive: ago(3 * H) })])),
     });
     expect(ids(view)).toEqual(["week", "hours", "unknown"]);
+  });
+
+  it("draws five rows, longest-stuck first, but counts and badges every stuck item", () => {
+    const seven = Array.from({ length: 7 }, (_, i) =>
+      blocked({
+        id: `s${i}`,
+        blockedOnType: "time",
+        project: RECIPE,
+        updatedAt: ago((i + 1) * DAY),
+      }),
+    );
+    const view = viewOf({
+      ...wait(...seven),
+      projects: loadedOf({ projects: [rollup(RECIPE.id)], childlessCount: 0 }),
+    });
+    const stuck = stuckOf(view);
+    // Killed by dropping the cap (seven rows), by capping before sorting
+    // (not the longest five), or by counting the capped rows.
+    expect(stuck.rows).toHaveLength(MAX_STUCK_ROWS);
+    expect(stuck.rows.map((row) => row.id)).toEqual(["s6", "s5", "s4", "s3", "s2"]);
+    expect(stuck.count).toEqual({ count: 7, atLeast: false });
+    expect(stuck.more).toBe(2);
+    expect(projectsOf(view).cards[0]!.stuckBadge).toBe("7 stuck");
   });
 
   it("is an empty list, not an error, when both reads loaded and nothing is stuck", () => {
@@ -854,6 +879,10 @@ describe("which projects get a card", () => {
       ),
     );
     expect(sections(view)).toMatchObject({ cards: ["fresh"], quiet: ["stale"] });
+
+    // A project the read returned twice is listed once.
+    const a = rollup("a", { executing: 1 }, { lastActivity: recent });
+    expect(sections(viewOf(projectsData(a, a))).cards).toEqual(["a"]);
   });
 
   it("treats exactly seven days as recent and a moment past it as quiet", () => {
@@ -971,11 +1000,6 @@ describe("which projects get a card", () => {
     expect(projectsOf(view).activeText).toBe("1+ active");
   });
 
-  it("lists a project once even if the read returned it twice", () => {
-    const a = rollup("a", { executing: 1 }, { lastActivity: recent });
-    expect(sections(viewOf(projectsData(a, a))).cards).toEqual(["a"]);
-  });
-
   it("is an error section when the projects read failed", () => {
     expect(viewOf({ projects: failed("Could not load projects.") }).projects).toEqual({
       status: "error",
@@ -1008,12 +1032,19 @@ describe("a project card", () => {
       lastActive: "active 2h ago",
     });
     expect(card.bar).toMatchObject({ caption: "18 of 31 done" });
-  });
 
-  it("trims the description and reads a blank one as none", () => {
+    // The description is trimmed, and a blank one reads as none.
     expect(cardOf({}, project({ headline: "  Spaced.  " })).headline).toBe("Spaced.");
     expect(cardOf({}, project({ headline: "   " })).headline).toBeNull();
     expect(cardOf({}, project({ headline: null })).headline).toBeNull();
+
+    // An unreadable time leaves the last-activity line out. A card needs a
+    // reason to exist, so give it live work.
+    const unreadable = cardOf(
+      { inProgress: loadedOf(column(live(1))) },
+      project({ lastActivity: "?" }),
+    );
+    expect(unreadable.lastActive).toBeNull();
   });
 
   it.each([
@@ -1023,12 +1054,6 @@ describe("a project card", () => {
     [4 * DAY, "active 4 days ago"],
   ])("last activity %d ms ago reads %s", (ms, text) => {
     expect(cardOf({}, project({ lastActivity: ago(ms) })).lastActive).toBe(text);
-  });
-
-  it("has no last-activity line when the time is unreadable", () => {
-    // A card needs a reason to exist, so give it live work; the age is simply absent.
-    const card = cardOf({ inProgress: loadedOf(column(live(1))) }, project({ lastActivity: "?" }));
-    expect(card.lastActive).toBeNull();
   });
 
   it("lists at most two live titles, most recently active first, then how many more", () => {
@@ -1200,9 +1225,9 @@ describe("spend", () => {
     expect(spendOf({ cost: 0.5 })).toBe("Spent since 18:00 yesterday: ~$0.50");
   });
 
-  it("says today once the window opened today", () => {
+  it("names this evening once the window opened on the same day", () => {
     const evening = new Date(2026, 7, 19, 20, 30).getTime();
-    expect(spendOf({ cost: 6.1 }, evening)).toBe("Spent since 18:00 today: ~$6.10");
+    expect(spendOf({ cost: 6.1 }, evening)).toBe("Spent since 18:00 this evening: ~$6.10");
   });
 
   it("is absent, with no explanation, when it is unknown", () => {
@@ -1243,6 +1268,26 @@ describe("the page as a whole", () => {
     expect(onlyProjects.needsYou.status).toBe("loaded");
     expect(onlyProjects.stuck.status).toBe("loaded");
     expect(onlyProjects.done.status).toBe("loaded");
+  });
+
+  it("treats the page as failed only when every section failed", () => {
+    const all = standup({
+      needsYou: failed("needs"),
+      projects: failed("projects"),
+      overnight: failed("overnight"),
+      waiting: failed("waiting"),
+      inProgress: failed("in progress"),
+    });
+    expect(everySectionFailed(all)).toBe(true);
+    expect(pageErrorMessage(all)).toBe("needs");
+    expect(pageErrorMessage({ ...all, needsYou: loadedOf({ items: [], total: 0 }) })).toBe(
+      "overnight",
+    );
+
+    // Four of five failing is still a page of sections, one of which works.
+    const fourOfFive = { ...all, projects: loadedOf({ projects: [], childlessCount: 0 }) };
+    expect(everySectionFailed(fourOfFive)).toBe(false);
+    expect(everySectionFailed(standup())).toBe(false);
   });
 
   it("does not mutate the data it is given", () => {

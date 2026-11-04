@@ -58,8 +58,10 @@ const OVERNIGHT_MAX_PAGES = 5;
  * Ids are a gapless-enough sequence that `newestId - limit` is a good page
  * boundary: too low and the page is merely larger than asked for (the LIMIT
  * still bounds it), never smaller. Clamped at 0 so a ledger shorter than one
- * page reads from the start, which is correct — there is nothing before it
- * to miss.
+ * page reads from the start, which is correct — a read that starts at the
+ * ledger's first event has nothing before it to miss, which is why
+ * `fetchOvernightEvents` reports `fromLedgerStart` and the page does not call
+ * such a read truncated.
  *
  * Returns `undefined` for a `null` or unparseable id so the caller falls
  * back to an unbounded `since`. That fallback reads the ledger's *start*
@@ -124,6 +126,16 @@ interface OvernightRead {
   readonly capped: boolean;
 }
 
+/** The overnight read, plus whether it began at the ledger's very first event. */
+interface OvernightEventsRead extends OvernightRead {
+  /**
+   * True when the span began at the start of the ledger (an empty ledger, or
+   * a newest id no larger than the span): nothing older exists to be missed,
+   * so a window that is not provably covered is still complete.
+   */
+  readonly fromLedgerStart: boolean;
+}
+
 /**
  * Reads one filtered feed forward from `since`, a page at a time.
  *
@@ -169,7 +181,7 @@ async function readPages(
 async function fetchOvernightEvents(
   personId: string | null,
   fetchImpl: typeof fetch,
-): Promise<OvernightRead> {
+): Promise<OvernightEventsRead> {
   // The overnight report is about *last night*, so it must read the END of
   // the ledger. `readSinceBounded` is `WHERE id > since ORDER BY id ASC`, so
   // a fetch with no `since` starts at the ledger's beginning and LIMIT takes
@@ -186,6 +198,13 @@ async function fetchOvernightEvents(
   // See `tailCursor` for what conflating them did.
   const probe = await fetchFeed({ personId, limit: 1 }, fetchImpl);
   const tailStart = tailCursor(probe.newestId, OVERNIGHT_SPAN_IDS);
+  // An empty ledger, or one whose newest id is within the span, is read from its first
+  // event. An unparseable id is not "from the start": `tailCursor` read it as
+  // unknown, so the read falls back to an unbounded `since` it cannot vouch for.
+  const fromLedgerStart =
+    probe.newestId === null ||
+    (/^\d+$/.test(probe.newestId.trim()) &&
+      BigInt(probe.newestId.trim()) <= BigInt(OVERNIGHT_SPAN_IDS));
 
   const [merges, anchor] = await Promise.all([
     readPages({ personId, since: tailStart, types: ["merge"] }, fetchImpl),
@@ -196,6 +215,7 @@ async function fetchOvernightEvents(
   return {
     events: [...merges.events, ...anchor.events.filter((event) => !mergeIds.has(event.id))],
     capped: merges.capped,
+    fromLedgerStart,
   };
 }
 
@@ -236,6 +256,7 @@ async function readColumn(column: BoardColumnId, fetchImpl: typeof fetch): Promi
     const section = await fetchBoardColumn(column, {
       fetchImpl,
       query: LIVE_COLUMN_QUERY,
+      withContext: true,
       ...(cursor === undefined ? {} : { cursor }),
     });
     entries.push(...section.entries);
@@ -289,7 +310,7 @@ export async function fetchStandup(
 
   return {
     viewerId: personId,
-    overnight: sectionOf(events, ({ events: eventList, capped }) => {
+    overnight: sectionOf(events, ({ events: eventList, capped, fromLedgerStart }) => {
       const report = buildOvernightReport(
         since,
         eventList,
@@ -297,7 +318,10 @@ export async function fetchStandup(
       );
       // A capped read stopped before the newest events: the count is a
       // floor, which is what `eventsTruncated` says.
-      return capped ? { ...report, eventsTruncated: true } : report;
+      // A read that began at the ledger's first event cannot have missed
+      // anything older, so the report's own "not provably covered" is dropped.
+      const eventsTruncated = capped || (report.eventsTruncated && !fromLedgerStart);
+      return { ...report, eventsTruncated };
     }),
     inProgress: sectionOf(inProgress, (column) => column),
     waiting: sectionOf(waiting, (column) => column),

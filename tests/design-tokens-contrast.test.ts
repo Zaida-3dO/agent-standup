@@ -181,7 +181,14 @@ describe.each(["dark", "light"] as const)("contrast — %s theme", (scope) => {
 
   it("primary and secondary text pass AA against every surface they sit on", () => {
     const failures: string[] = [];
-    for (const surface of ["surface-app", "surface-panel", "surface-card", "surface-raised"]) {
+    for (const surface of [
+      "surface-app",
+      "surface-panel",
+      "surface-card",
+      "surface-raised",
+      "needs-wash",
+      "stuck-wash",
+    ]) {
       for (const text of ["text-primary", "text-secondary"]) {
         const ratio = contrastRatio(oklchOf(text, scope), oklchOf(surface, scope));
         if (ratio < AA_TEXT) failures.push(`${text} on ${surface}: ${ratio.toFixed(2)}`);

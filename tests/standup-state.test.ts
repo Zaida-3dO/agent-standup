@@ -346,6 +346,9 @@ describe("the live columns are read to their end", () => {
       "waiting",
     ]);
     for (const params of boardUrls) expect(params.get("level")).toBe("exclude:0");
+    // Killed by dropping `withContext`: Stuck rows lose their age and the
+    // project cards lose their rows' projects.
+    for (const params of boardUrls) expect(params.get("withContext")).toBe("true");
   });
 
   it("follows nextCursor across pages and keeps every entry", async () => {
@@ -492,7 +495,7 @@ function ledgerFetch(rows: readonly LedgerRow[]) {
           itemTitle: `Item ${row.id}`,
         }),
       );
-    return json(feed(matching, { newestId: String(newest) }));
+    return json(feed(matching, { newestId: rows.length === 0 ? null : String(newest) }));
   });
   return { impl: impl as unknown as typeof fetch, calls };
 }
@@ -529,10 +532,27 @@ describe("the overnight window", () => {
   });
 
   it("is truncated when the span starts inside the window", async () => {
-    const rows: LedgerRow[] = [{ id: 11, type: "merge", ts: INSIDE }];
+    // A large newest id: the read began 2,000 ids back, so older events may exist.
+    // Killed by dropping the ledger-start check the other way, always saying "complete".
+    const rows: LedgerRow[] = [{ id: 5000, type: "merge", ts: INSIDE }];
     const { impl } = ledgerFetch(rows);
     const report = loaded((await fetchStandup("user-a", NOW, impl)).overnight);
     expect(report.eventsTruncated).toBe(true);
+  });
+
+  it("is not truncated when the read began at the ledger's first event", async () => {
+    // Killed by reading "the span did not reach the cutoff" as "truncated" with
+    // no regard to where the span began: an empty ledger read "0+ things", and so
+    // did a young one whose every event is inside the window.
+    const empty = ledgerFetch([]);
+    const emptyReport = loaded((await fetchStandup("user-a", NOW, empty.impl)).overnight);
+    expect(emptyReport.eventsTruncated).toBe(false);
+    expect(emptyReport.merged).toHaveLength(0);
+
+    const young = ledgerFetch([{ id: 40, type: "merge", ts: INSIDE }]);
+    const youngReport = loaded((await fetchStandup("user-a", NOW, young.impl)).overnight);
+    expect(youngReport.eventsTruncated).toBe(false);
+    expect(youngReport.merged).toHaveLength(1);
   });
 
   it("does not count the anchor event twice when it is itself a merge", async () => {

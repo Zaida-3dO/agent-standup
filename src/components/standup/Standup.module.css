@@ -16,6 +16,7 @@
 
 .page {
   box-sizing: border-box;
+  width: 100%;
   max-width: 1440px;
   margin: 0 auto;
   padding: var(--space-8) var(--space-10) var(--space-12);
@@ -470,15 +471,17 @@
 @media (min-width: 1100px) {
   .layout {
     grid-template-columns: minmax(0, 1fr) 360px;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto auto 1fr;
     grid-template-areas:
       "needs stuck"
+      "needs done"
       "projects done";
   }
 
   /* Nothing stuck: the Done panel moves up beside Needs you instead of
      leaving a hole where Stuck would have been. */
   .layout[data-has-stuck="false"] {
+    grid-template-rows: auto 1fr;
     grid-template-areas:
       "needs done"
       "projects done";
@@ -490,6 +493,7 @@
 
   .areaStuck {
     grid-area: stuck;
+    align-self: start;
   }
 
   .areaProjects {
@@ -500,15 +504,13 @@
     grid-area: done;
   }
 
-  /* Needs you and Stuck share a row; stretching both keeps it level rather
-     than leaving the shorter one ragged. */
-  .areaNeeds,
-  .areaStuck {
+  /* Needs you spans the rows beside Stuck and Done, so it fills them; Stuck
+     keeps its own height, which lets Done start right beneath it. */
+  .areaNeeds {
     align-self: stretch;
   }
 
-  .areaNeeds > *,
-  .areaStuck > * {
+  .areaNeeds > * {
     height: 100%;
     box-sizing: border-box;
   }
@@ -548,7 +550,7 @@
 
 .cardTop {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-2);
 }
@@ -559,12 +561,17 @@
 }
 
 .cardName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
 }
 
 .badges {
   display: flex;
+  flex-shrink: 0;
   gap: 6px;
   margin-left: auto;
 }

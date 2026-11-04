@@ -164,13 +164,18 @@ describe("Standup home: layout and motion", () => {
     const wide = blockOf("@media (min-width: 1100px)");
     const layout = ruleFor(wide, ".layout");
     expect(layout).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\) 360px/);
-    for (const row of ["needs stuck", "projects done"]) {
+    // Needs you spans two rows, so Done starts right under Stuck instead of
+    // under the taller Needs-you panel.
+    expect(layout).toMatch(/grid-template-rows:\s*auto auto 1fr/);
+    for (const row of ["needs stuck", "needs done", "projects done"]) {
       expect(layout, `the busy layout is missing the row "${row}"`).toContain(`"${row}"`);
     }
     // With nothing stuck, Done moves up beside Needs you instead of leaving a hole.
     const noStuck = ruleFor(wide, '.layout[data-has-stuck="false"]');
     expect(noStuck).toContain('"needs done"');
     expect(noStuck).toContain('"projects done"');
+    // Stuck keeps its own height rather than stretching to Needs you.
+    expect(ruleFor(wide, ".areaStuck")).toMatch(/align-self:\s*start/);
     for (const [selector, area] of [
       [".areaNeeds", "needs"],
       [".areaStuck", "stuck"],
@@ -181,6 +186,21 @@ describe("Standup home: layout and motion", () => {
         new RegExp(`grid-area:\\s*${area}\\b`),
       );
     }
+  });
+
+  it("gives the page the full width of its container, so a skeleton made of percentages fills it", () => {
+    // Killed by deleting `width: 100%`: the page shrinks to its content and the
+    // loading skeleton collapses into a narrow column.
+    expect(ruleFor(CODE, ".page")).toMatch(/(^|[;\s])width:\s*100%/);
+  });
+
+  it("keeps a card's badges on the name's line and ellipsises a long name", () => {
+    expect(ruleFor(CODE, ".cardTop")).toMatch(/flex-wrap:\s*nowrap/);
+    expect(ruleFor(CODE, ".badges")).toMatch(/flex-shrink:\s*0/);
+    const name = ruleFor(CODE, ".cardName");
+    expect(name).toMatch(/min-width:\s*0/);
+    expect(name).toMatch(/text-overflow:\s*ellipsis/);
+    expect(name).toMatch(/white-space:\s*nowrap/);
   });
 
   it("stacks in one column below 1100px and shows two columns of cards from 720px", () => {

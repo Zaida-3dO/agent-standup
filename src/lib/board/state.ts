@@ -50,6 +50,12 @@ export async function fetchBoardColumn(
      * not to the address.
      */
     readonly query?: BoardQuery;
+    /**
+     * Ask for each entry's root `project` and, on the slim shape, its
+     * `updatedAt` (`get_board`'s `withContext`). Off by default: the board
+     * view draws neither, and the plain read stays inside its payload bound.
+     */
+    readonly withContext?: boolean;
   } = {},
 ): Promise<BoardSection> {
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -57,6 +63,7 @@ export async function fetchBoardColumn(
     column,
     ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
   });
+  if (options.withContext === true) query.set("withContext", "true");
   // The browser reaches the API through the server-side proxy, which is what
   // keeps the credential off the client — `uiApiPath` decides that, and it is
   // orthogonal to how the query string is built.

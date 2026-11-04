@@ -218,6 +218,7 @@ function busyView(overrides: Partial<StandupView> = {}): StandupView {
         }),
       ],
       count: { count: 2, atLeast: false },
+      more: 0,
     },
     projects: {
       status: "loaded",
@@ -268,7 +269,7 @@ function quietView(overrides: Partial<StandupView> = {}): StandupView {
       [" were finished since yesterday evening.", "plain"],
     ),
     needsYou: { status: "loaded", total: 0, rows: [], hasMore: false, quiet: true },
-    stuck: { status: "loaded", rows: [], count: { count: 0, atLeast: false } },
+    stuck: { status: "loaded", rows: [], count: { count: 0, atLeast: false }, more: 0 },
     ...overrides,
   });
 }
@@ -305,6 +306,30 @@ describe("StandupHomeView — load branches", () => {
     const buttons = findAllByType(tree, "button");
     expect(buttons).toHaveLength(1);
     expect(textOf(render(buttons[0]))).toBe("Try again");
+    (buttons[0]!.props as { onClick: () => void }).onClick();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the whole-page error when every section failed, not five section errors", () => {
+    const onRetry = vi.fn();
+    const failed = (message: string) => ({ status: "error", message }) as const;
+    const data: StandupData = {
+      viewerId: "user-a",
+      overnight: failed("overnight down"),
+      inProgress: failed("board down"),
+      waiting: failed("board down"),
+      projects: failed("projects down"),
+      needsYou: failed("needs-you down"),
+    };
+    const tree = StandupHomeView({ loadState: { status: "loaded", data }, now: NOW, onRetry });
+    const html = render(tree);
+    // Killed by dropping the every-section check: the page would draw four
+    // section errors and no sentence instead.
+    expect(textOf(html)).toContain("needs-you down");
+    expect(count(html, 'data-section-error="true"')).toBe(0);
+    expect(headings(html, 1)).toEqual(["Standup"]);
+    const buttons = findAllByType(tree, "button");
+    expect(buttons).toHaveLength(1);
     (buttons[0]!.props as { onClick: () => void }).onClick();
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
@@ -614,6 +639,7 @@ describe("StuckPanel and DoneSincePanel", () => {
           status: "loaded",
           rows: [stuckRow(), stuckRow({ id: "x", href: "/items/x", age: null })],
           count: { count: 2, atLeast: true },
+          more: 0,
         },
         onRetry: () => {},
       }),
@@ -625,6 +651,26 @@ describe("StuckPanel and DoneSincePanel", () => {
     expect(text).toContain("4 days");
     expect(text).toContain("2+");
     expect(count(html, "<a ")).toBe(2);
+  });
+
+  it("links to the board for the stuck items it does not draw, and only then", () => {
+    const panel = (more: number) =>
+      render(
+        StuckPanel({
+          view: {
+            status: "loaded",
+            rows: [stuckRow()],
+            count: { count: 1 + more, atLeast: false },
+            more,
+          },
+          onRetry: () => {},
+        }),
+      );
+    expect(panel(0)).not.toContain('href="/board"');
+    const html = panel(3);
+    expect(html).toContain('href="/board"');
+    expect(textOf(html)).toContain("3 more on the board");
+    expect(textOf(html)).toContain("4"); // the count is every stuck item, not the rows drawn
   });
 
   it("lists done titles with project and time, a row without an item as plain text, and the log link", () => {

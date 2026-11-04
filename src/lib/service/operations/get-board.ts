@@ -449,6 +449,12 @@ const inputSchema = z
      */
     full: z.boolean().default(false),
     /**
+     * Add each entry's root `project` {id, title} and, on the slim shape, the
+     * item's `updatedAt`. Off by default so the default board stays inside its
+     * payload bound.
+     */
+    withContext: z.boolean().default(false),
+    /**
      * How many items per column. Applies to **each** returned column, not
      * to the response as a whole, because a caller pages one column at a
      * time and a shared budget would make one column's page size depend on
@@ -482,19 +488,22 @@ function escapeLikePattern(value: string): string {
 
 /**
  * The item a board entry carries: the slim board shape by default, the whole
- * record when `full` was passed, plus the project it belongs to.
+ * record when `full` was passed, plus the project it belongs to when the read
+ * asked for `withContext`.
  *
- * `project` is its top-level ancestor of kind `project`, or `null` for a
- * project itself and for an orphan. It is resolved for the whole response in
- * one statement (`../items/root-project.ts`), alongside ownership, trust and
- * the rollup, so a card can name its project without a call per card.
+ * `project` is present **only with `withContext`**. It is its top-level
+ * ancestor of kind `project`, or `null` for a project itself and for an
+ * orphan. It is resolved for the whole response in one statement
+ * (`../items/root-project.ts`), alongside ownership, trust and the rollup, so
+ * a card can name its project without a call per card. Without `withContext`
+ * the key is absent, which keeps the default board inside its payload bound.
  */
 export type BoardEntryItem = (BoardItemSummaryRecord | ItemRecord) & {
-  readonly project: RootProject | null;
+  readonly project?: RootProject | null;
 };
 
 export interface BoardEntry {
-  /** The slim board shape by default; the whole record when `full` was passed — plus its root `project`. */
+  /** The slim board shape by default; the whole record when `full` was passed — plus its root `project` when `withContext` was passed. */
   readonly item: BoardEntryItem;
   /** The item's own state, mapped straight through for a task/subtask. Always present on a project too — see `columns.ts`'s `columnForProject` header for why it must not be read as the project's column. */
   readonly column: BoardColumn;
@@ -633,7 +642,7 @@ export const getBoard = defineOperation({
   name: "get_board",
   kind: "read",
   summary:
-    "One paginated page of one board column, with that column's true total and who holds each item. With no column, returns open work only — in_progress and waiting — plus a notice naming the calls for backlog and completed. Filter by priority, area, repo, kind, state, assignee, actor, search, level (tree depth) or project (a whole subtree); sort by priority, name, created or updated, either direction; pass full for whole records.",
+    "One paginated page of one board column, with that column's true total and who holds each item. With no column, returns open work only — in_progress and waiting — plus a notice naming the calls for backlog and completed. Filter by priority, area, repo, kind, state, assignee, actor, search, level (tree depth) or project (a whole subtree); sort by priority, name, created or updated, either direction; pass full for whole records; pass withContext to add each entry's root project and, on the slim shape, its updatedAt.",
   // Stryker restore all
   input: inputSchema,
   async handler(ctx: ServiceContext, input: GetBoardInput): Promise<BoardOutput> {
@@ -856,6 +865,7 @@ export const getBoard = defineOperation({
     // paginating the large side and walking the small one is where the
     // payload actually goes. If projects ever outgrow that, the fix is a
     // stored derived column, not a bigger page.
+    const boardVariant = input.withContext ? "board-context" : "board";
     const projectsExcluded = input.kind !== undefined && input.kind !== "project";
     const projectsOnly = input.kind === "project";
 
@@ -871,7 +881,7 @@ export const getBoard = defineOperation({
       // an unsorted band above a sorted one, which reads as the sort having
       // half-failed rather than as a deliberate split.
       const projectRows = await ctx.db.$queryRawUnsafe<(RawItemRow | RawBoardItemSummaryRow)[]>(
-        `SELECT ${itemColumnsFor(input.full, "board")} FROM "Item" WHERE ${projectWhere.join(" AND ")}
+        `SELECT ${itemColumnsFor(input.full, boardVariant)} FROM "Item" WHERE ${projectWhere.join(" AND ")}
          ${orderByClause(input.sort, input.direction)}`,
         ...sharedValues,
       );
@@ -936,10 +946,11 @@ export const getBoard = defineOperation({
         // `assignments`, below — a project's rollup is counted exactly like
         // any other card's, over the subtree its column was just derived
         // from.
-        // A project is not "in" a project, so its `project` is `null` here
-        // and stays so — the root-project pass below yields no entry for it.
+        // A project is not "in" a project, so with `withContext` its
+        // `project` is `null` here and stays so — the root-project pass below
+        // yields no entry for it. Without `withContext` the key is absent.
         list.push({
-          item: { ...item, project: null },
+          item: input.withContext ? { ...item, project: null } : item,
           column,
           assignments: [],
           trust: null,
@@ -1032,7 +1043,7 @@ export const getBoard = defineOperation({
         // exists without a second query.
         pageValues.push(limit + 1);
         const rows = await ctx.db.$queryRawUnsafe<(RawItemRow | RawBoardItemSummaryRow)[]>(
-          `SELECT ${itemColumnsFor(input.full, "board")} FROM "Item" WHERE ${pageWhere.join(" AND ")}
+          `SELECT ${itemColumnsFor(input.full, boardVariant)} FROM "Item" WHERE ${pageWhere.join(" AND ")}
            ${orderByClause(input.sort, input.direction)}
            LIMIT $${pageIndex}`,
           ...pageValues,
@@ -1044,9 +1055,9 @@ export const getBoard = defineOperation({
           ? (page as RawItemRow[]).map(toItemRecord)
           : (page as RawBoardItemSummaryRow[]).map(toBoardItemSummaryRecord);
         entries = items.map((item) => ({
-          // `project` is filled for the whole response in one statement,
-          // below, with the other per-card passes.
-          item: { ...item, project: null },
+          // With `withContext`, `project` is filled for the whole response in
+          // one statement, below, with the other per-card passes.
+          item: input.withContext ? { ...item, project: null } : item,
           column: columnForState(requireItemState(item.state, item.id)),
           assignments: [],
           // Filled in the same one-statement pass as `assignments`, below —
@@ -1131,14 +1142,20 @@ export const getBoard = defineOperation({
       // The project each card belongs to — the same one-statement shape
       // again, walking `parentId` upward from every entry id at once. A
       // project's own id yields no entry, so its `project` stays `null`.
-      const projectsByItem = await rootProjectsFor(ctx.db, entryIds);
+      // Only when the caller asked: it costs a statement and a `project` key
+      // on every entry, and the default board has no room for either.
+      const projectsByItem = input.withContext
+        ? await rootProjectsFor(ctx.db, entryIds)
+        : new Map<string, RootProject>();
 
       for (const column of requested) {
         board[column] = {
           ...board[column],
           entries: board[column].entries.map((entry) => ({
             ...entry,
-            item: { ...entry.item, project: projectsByItem.get(entry.item.id) ?? null },
+            item: input.withContext
+              ? { ...entry.item, project: projectsByItem.get(entry.item.id) ?? null }
+              : entry.item,
             // `?? []` is what makes "nobody holds this" an empty array
             // rather than an absent field — see `BoardEntry.assignments`.
             assignments: assignmentsByItem.get(entry.item.id) ?? [],

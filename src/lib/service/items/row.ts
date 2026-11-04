@@ -337,6 +337,14 @@ export interface BoardItemSummaryRecord extends ItemSummaryRecord {
    * row, on the hottest read in the product.
    */
   readonly links: readonly ItemLinkRecord[];
+  /**
+   * ISO 8601 of the item's last change. **Present only when the read asked
+   * for `withContext`** (`get_board`): it is what lets a Blocked row say how
+   * long it has waited, and it is off by default so the plain board stays
+   * inside its payload bound. It is the item's last change, so an age
+   * measured from it is a floor on how long the item has been in its state.
+   */
+  readonly updatedAt?: string;
 }
 
 /** The raw shape `$queryRawUnsafe` returns for one board summary row. */
@@ -351,6 +359,8 @@ export interface RawBoardItemSummaryRow extends RawItemSummaryRow {
   pauseReason: string | null;
   originType: string;
   links: ItemLinkRecord[] | null;
+  /** Selected only by the `board-context` column list. */
+  updatedAt?: Date | string;
 }
 
 /** Maps one raw board summary row to `BoardItemSummaryRecord`. */
@@ -370,6 +380,9 @@ export function toBoardItemSummaryRecord(row: RawBoardItemSummaryRow): BoardItem
     // a card renders the row without branching on whether links were
     // fetched.
     links: row.links ?? [],
+    // Absent, not null, when the read did not select it — a caller can tell
+    // "not asked for" from a value.
+    ...(row.updatedAt === undefined ? {} : { updatedAt: isoOrNull(row.updatedAt) as string }),
   };
 }
 
@@ -478,6 +491,11 @@ export const BOARD_ITEM_SUMMARY_COLUMNS = [
   ITEM_LINKS_COLUMN,
 ].join(", ");
 
+/** `BOARD_ITEM_SUMMARY_COLUMNS` plus the `updatedAt` a `withContext` read adds. */
+export const BOARD_ITEM_SUMMARY_CONTEXT_COLUMNS = [BOARD_ITEM_SUMMARY_COLUMNS, '"updatedAt"'].join(
+  ", ",
+);
+
 export const ITEM_COLUMNS = [
   "id",
   '"parentId"',
@@ -573,7 +591,11 @@ export const NOT_ARCHIVED_CONDITION = '"archivedAt" IS NULL';
  * only way to catch it is to test the column choice itself, which means it
  * has to be a thing that can be called.
  */
-export function itemColumnsFor(full: boolean, variant: "item" | "board" = "item"): string {
+export function itemColumnsFor(
+  full: boolean,
+  variant: "item" | "board" | "board-context" = "item",
+): string {
   if (full) return ITEM_COLUMNS;
+  if (variant === "board-context") return BOARD_ITEM_SUMMARY_CONTEXT_COLUMNS;
   return variant === "board" ? BOARD_ITEM_SUMMARY_COLUMNS : ITEM_SUMMARY_COLUMNS;
 }

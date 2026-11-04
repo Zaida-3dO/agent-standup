@@ -11,7 +11,12 @@
 // Desktop placement is done with CSS grid areas, so the keyboard path follows
 // importance and not the column a panel happens to sit in.
 import type { StandupLoadState } from "@/lib/standup/state";
-import { buildStandupView, type StandupView } from "@/lib/standup/view";
+import {
+  buildStandupView,
+  everySectionFailed,
+  pageErrorMessage,
+  type StandupView,
+} from "@/lib/standup/view";
 import { ErrorState } from "@/components/states";
 import { BriefSentence } from "./BriefSentence";
 import { DoneSincePanel } from "./DoneSincePanel";
@@ -68,7 +73,11 @@ export function StandupPage({ view, onRetry }: StandupPageProps) {
 export function StandupHomeView({ loadState, now, onRetry }: StandupHomeViewProps) {
   if (loadState.status === "loading") return <StandupSkeleton />;
 
-  if (loadState.status === "error") {
+  // `fetchStandup` never rejects: it settles every read on its own. When all
+  // five fail there is nothing to draw, so that is the whole-page error too.
+  if (loadState.status === "error" || everySectionFailed(loadState.data)) {
+    const message =
+      loadState.status === "error" ? loadState.message : pageErrorMessage(loadState.data);
     return (
       <section className={styles.page} aria-label="Standup">
         <header className={styles.head}>
@@ -76,7 +85,7 @@ export function StandupHomeView({ loadState, now, onRetry }: StandupHomeViewProp
             <h1 className={styles.date}>Standup</h1>
           </div>
         </header>
-        <ErrorState message={loadState.message} centered />
+        <ErrorState message={message} centered />
         <div className={styles.errorActions}>
           <button type="button" className={styles.retry} onClick={onRetry}>
             Try again

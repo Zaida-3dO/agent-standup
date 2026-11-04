@@ -535,8 +535,7 @@ describeIfDb("since your last visit, against Postgres", () => {
           "type",
         ].sort(),
       );
-      const growth =
-        JSON.stringify(eventFor(grandchild)).length - JSON.stringify(rest).length;
+      const growth = JSON.stringify(eventFor(grandchild)).length - JSON.stringify(rest).length;
       expect(growth).toBeLessThanOrEqual(JSON.stringify(named).length + ',"project":'.length);
     }, 60_000);
 

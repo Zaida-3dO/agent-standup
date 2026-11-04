@@ -288,6 +288,9 @@ export type NeedsYouView =
       readonly quiet: boolean;
     };
 
+/** How many Needs-you rows the home page draws; "Open the full list" carries the rest. */
+export const MAX_NEEDS_YOU_ROWS = 5;
+
 function needsYouRow(item: NeedsYouItem, now: number): NeedsYouRowView {
   const base = itemHref(item.id);
   const known = item.reason in NEEDS_YOU_VERBS;
@@ -314,8 +317,16 @@ function buildNeedsYou(section: SectionState<NeedsYouRead>, now: number): NeedsY
     seen.add(item.id);
     rows.push(needsYouRow(item, now));
   }
+  // The total counts every distinct item; only the oldest few are drawn.
   const total = Math.max(section.data.total, rows.length);
-  return { status: "loaded", total, rows, hasMore: total > rows.length, quiet: total === 0 };
+  const shown = rows.slice(0, MAX_NEEDS_YOU_ROWS);
+  return {
+    status: "loaded",
+    total,
+    rows: shown,
+    hasMore: total > shown.length,
+    quiet: total === 0,
+  };
 }
 
 // ── Board entries: live work and stuck work ─────────────────────────────
@@ -390,9 +401,20 @@ export type StuckView =
       readonly status: "loaded";
       /** Longest-stuck first, one row per item. Render nothing at all when empty. */
       readonly rows: readonly StuckRowView[];
-      /** The panel's count: `rows.length`, as a floor when part of the evidence could not be read. */
+      /** The panel's count: every stuck item, not just the rows drawn, as a floor when part of the evidence could not be read. */
       readonly count: Counted;
+      /** How many stuck items are not drawn (`count.count - rows.length`): the footer links to the board for them. */
+      readonly more: number;
     };
+
+/** How many Stuck rows the home page draws; the footer link carries the rest. */
+export const MAX_STUCK_ROWS = 5;
+
+/** The Stuck view, with each project's count of stuck items taken from the uncapped list. */
+interface StuckBuild {
+  readonly view: StuckView;
+  readonly byProject: ReadonlyMap<string, number>;
+}
 
 export const STOPPED_WHY = "Its agent stopped responding.";
 
@@ -437,7 +459,7 @@ function buildStuck(
   needsYouIds: ReadonlySet<string> | null,
   viewerId: string | null,
   now: number,
-): StuckView {
+): StuckBuild {
   const candidates: StuckCandidate[] = [];
 
   if (waiting.status === "loaded") {
@@ -488,7 +510,7 @@ function buildStuck(
   const failed = [waiting, inProgress].find((section) => section.status === "error");
   const kept = candidates.filter((c) => needsYouIds === null || !needsYouIds.has(c.row.id));
   if (failed !== undefined && failed.status === "error" && kept.length === 0) {
-    return { status: "error", message: failed.message };
+    return { view: { status: "error", message: failed.message }, byProject: new Map() };
   }
 
   // Longest-stuck first; an unknown age sorts last rather than first.
@@ -506,15 +528,25 @@ function buildStuck(
           ? -1
           : 1;
   });
-  const rows = kept.map((c) => c.row);
+  // A project's badge counts every stuck item, not only the rows drawn.
+  const byProject = new Map<string, number>();
+  for (const { row } of kept) {
+    if (row.project === null) continue;
+    byProject.set(row.project.id, (byProject.get(row.project.id) ?? 0) + 1);
+  }
+  const rows = kept.slice(0, MAX_STUCK_ROWS).map((c) => c.row);
 
   const capped =
     (waiting.status === "loaded" && waiting.data.capped) ||
     (inProgress.status === "loaded" && inProgress.data.capped);
   return {
-    status: "loaded",
-    rows,
-    count: { count: rows.length, atLeast: capped || failed !== undefined },
+    view: {
+      status: "loaded",
+      rows,
+      count: { count: kept.length, atLeast: capped || failed !== undefined },
+      more: kept.length - rows.length,
+    },
+    byProject,
   };
 }
 
@@ -883,6 +915,30 @@ export interface StandupView {
   readonly done: DoneView;
 }
 
+/** The five sections of the loaded data, in the order the page draws them. */
+function sectionsOf(data: StandupData): readonly SectionState<unknown>[] {
+  return [data.needsYou, data.overnight, data.inProgress, data.waiting, data.projects];
+}
+
+/**
+ * True when every section's read failed: the page then has nothing to say,
+ * so it shows one whole-page error instead of five section errors.
+ */
+export function everySectionFailed(data: StandupData): boolean {
+  return sectionsOf(data).every((section) => section.status === "error");
+}
+
+/** The message for a whole-page error: Needs you's, else the first failed section's. */
+export function pageErrorMessage(data: StandupData): string {
+  const failed =
+    data.needsYou.status === "error"
+      ? data.needsYou
+      : sectionsOf(data).find((section) => section.status === "error");
+  return failed !== undefined && failed.status === "error"
+    ? failed.message
+    : "Could not load the Standup home.";
+}
+
 /**
  * Everything the Standup home renders, from the loaded data.
  *
@@ -900,7 +956,13 @@ export function buildStandupView(data: StandupData, now: number): StandupView {
     data.needsYou.status === "loaded"
       ? new Set(data.needsYou.data.items.map((item) => item.id))
       : null;
-  const stuck = buildStuck(data.waiting, data.inProgress, needsYouIds, data.viewerId, now);
+  const { view: stuck, byProject: stuckByProject } = buildStuck(
+    data.waiting,
+    data.inProgress,
+    needsYouIds,
+    data.viewerId,
+    now,
+  );
   const done = buildDone(data.overnight);
 
   // Agents and projects, from the in-progress column.
@@ -941,13 +1003,6 @@ export function buildStandupView(data: StandupData, now: number): StandupView {
       needsByProject.set(item.project.id, (needsByProject.get(item.project.id) ?? 0) + 1);
     }
   }
-  const stuckByProject = new Map<string, number>();
-  if (stuck.status === "loaded") {
-    for (const row of stuck.rows) {
-      if (row.project === null) continue;
-      stuckByProject.set(row.project.id, (stuckByProject.get(row.project.id) ?? 0) + 1);
-    }
-  }
   const liveByProject = new Map<string, LiveWork[]>();
   for (const entry of live ?? []) {
     if (entry.project === null) continue;
@@ -969,7 +1024,7 @@ export function buildStandupView(data: StandupData, now: number): StandupView {
   const report = data.overnight.status === "loaded" ? data.overnight.data : null;
   const spend =
     report !== null && !report.costUnavailable && report.cost !== null
-      ? `Spent since 18:00 ${sameDay ? "today" : "yesterday"}: ~$${report.cost.toFixed(2)}`
+      ? `Spent since 18:00 ${sameDay ? "this evening" : "yesterday"}: ~$${report.cost.toFixed(2)}`
       : null;
 
   return {
