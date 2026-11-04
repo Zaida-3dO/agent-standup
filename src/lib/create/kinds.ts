@@ -30,14 +30,12 @@
 //   * **`body`** is `z.string()` with no `.optional()`. An omitted body is
 //     an `invalid_input` refusal, not a null column. A three-field dialog
 //     that collects no body must therefore send `""` deliberately.
-//   * **`projectId`** on a task is required with one named escape hatch, the
-//     literal `"inbox"`.
+//   * **`projectId`** on a task is required, and the Inbox is refused: it
+//     takes no new work, so a task names a real project.
 //
 // Discovering these by being refused is a cost this repository has paid
 // enough times to have written it down; a person filling in a form should
 // not pay it again.
-import { INBOX_PROJECT_ID } from "./inbox";
-
 /** The kinds a person can mint from the UI. */
 export type CreateKind = "project" | "task" | "subtask";
 
@@ -80,10 +78,9 @@ export interface CreateKindSpec {
   /**
    * The value used when a parent is required and the person named none.
    *
-   * Only a task has one — `"inbox"`, the sentinel `create_task` documents.
-   * A subtask has no equivalent: "the inbox subtask" is not a thing that
-   * exists, so a subtask without a task named is refused here rather than
-   * filed somewhere arbitrary.
+   * No kind has one: the Inbox takes no new work, and a subtask has no
+   * equivalent, so a task or subtask without a parent named is refused here
+   * rather than filed somewhere arbitrary.
    */
   readonly parentFallback: string | null;
 }
@@ -104,7 +101,7 @@ export const CREATE_KINDS: Readonly<Record<CreateKind, CreateKindSpec>> = {
     collection: "tasks",
     parentField: "projectId",
     parentLabel: "Project",
-    parentFallback: INBOX_PROJECT_ID,
+    parentFallback: null,
   },
   subtask: {
     kind: "subtask",

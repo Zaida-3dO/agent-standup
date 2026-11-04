@@ -44,6 +44,7 @@ import type { ItemEditProps } from "@/lib/item-detail/edit-state";
 import type { EventType } from "@/lib/events";
 import { boardLinkFor } from "@/lib/item-detail/board-link";
 import { bodyExcerpt } from "@/lib/item-detail/excerpt";
+import { documentLine } from "@/lib/item-detail/documents";
 import { SubtaskTree } from "./SubtaskTree";
 import { HistoryList } from "./HistoryList";
 import { PlanPanel } from "./PlanPanel";
@@ -55,6 +56,7 @@ import { VerdictBadge } from "./VerdictBadge";
 import { TrustBadge } from "@/components/chips/TrustBadge";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { RepoChip } from "@/components/chips/RepoChip";
+import { showRepoTag } from "@/lib/design/repo-tag";
 import { LinkChips } from "@/components/chips/LinkChips";
 import { VerifyStateAction, type VerifyStateStatus } from "./VerifyStateAction";
 import { TabStrip, tabControlId, tabPanelId } from "./TabStrip";
@@ -236,6 +238,7 @@ export function ItemDetailView({
 
   const { item, column, subtasks, artifacts, history, historyTruncated, summary } =
     loadState.detail;
+  const documents = loadState.detail.documents ?? [];
   // Everything the status block shows, derived in one pass — see
   // `@/lib/item-detail/status`. Derived here rather than inside the block so
   // the block stays a renderer of an already-decided answer.
@@ -393,7 +396,7 @@ export function ItemDetailView({
           >
             <AreaChip area={item.area} />
           </ChipLink>
-          {item.repo !== null && (
+          {showRepoTag(item.area, item.repo) && (
             <ChipLink
               href={boardLinkFor("repo", item.repo)}
               label={`Filter the board by repo: ${item.repo}`}
@@ -585,6 +588,18 @@ export function ItemDetailView({
               </li>
             ))}
           </ul>
+          {/* One plain line per document the item carries. Documents are
+              agent context, so only their existence and size are said here;
+              the entries are never loaded by this page. */}
+          {documents.length > 0 && (
+            <ul className={styles.documents} aria-label="Documents">
+              {documents.map((summaryOfDoc) => (
+                <li key={summaryOfDoc.doc} data-document={summaryOfDoc.doc}>
+                  {documentLine(summaryOfDoc)}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>,
       )}
 

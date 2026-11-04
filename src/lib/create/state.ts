@@ -85,15 +85,18 @@ export function blockingIssues(draft: QuickCreateDraft): BlockingIssue[] {
       message: "An area is required — it is how the board groups this item.",
     });
   }
-  // A subtask is *defined* by having a parent and has no sentinel standing
-  // in for one, so an empty parent is a refusal rather than a fallback. A
-  // task's empty parent is not an issue at all: it resolves to the inbox.
+  // A task and a subtask are *defined* by having a parent, and nothing
+  // stands in for one (the Inbox takes no new work), so an empty parent is a
+  // refusal rather than a fallback.
   const spec = CREATE_KINDS[draft.kind];
   if (spec.parentField !== null && spec.parentFallback === null && draft.parent.trim() === "") {
     issues.push({
       field: "parent",
       rule: "parent_required",
-      message: `A ${spec.parentLabel?.toLowerCase() ?? "parent"} is required — a subtask must belong to a task.`,
+      message:
+        draft.kind === "task"
+          ? "A project is required — a task must belong to a project (the Inbox takes no new work)."
+          : `A ${spec.parentLabel?.toLowerCase() ?? "parent"} is required — a subtask must belong to a task.`,
     });
   }
 
@@ -164,8 +167,8 @@ export interface TitlePreview {
 /**
  * Normalises an em dash the way the `insertItem` handler does on the way in.
  *
- * Re-implemented rather than imported for the reason `INBOX_PROJECT_ID` is:
- * `@/lib/text-normalize` is reachable, but the preview only needs to agree
+ * Re-implemented rather than imported, to keep the service layer out of the
+ * client bundle: `@/lib/text-normalize` is reachable, but the preview only needs to agree
  * with it, and `tests/create-contract.test.ts` asserts that agreement
  * directly against the real function over a table of inputs. That makes the
  * duplication checked rather than trusted.
@@ -203,8 +206,8 @@ export function titlePreview(title: string): TitlePreview {
  *  * **`body: ""`** — `body` is `z.string()` with no `.optional()`, so
  *    omitting it is `invalid_input`. A three-field dialog has no body to
  *    send, so it sends the empty one rather than nothing.
- *  * **the parent key** — `projectId` or `taskId` by kind, with `"inbox"`
- *    standing in for an unnamed project. Never both, and never a `parentId`:
+ *  * **the parent key** — `projectId` or `taskId` by kind, always named by
+ *    the person. Never both, and never a `parentId`:
  *    the schemas are `.strict()` and refuse an unrecognised key rather than
  *    ignoring it.
  *
@@ -226,8 +229,8 @@ export function createRequestBody(draft: QuickCreateDraft): Record<string, unkno
 
   if (spec.parentField !== null) {
     const named = draft.parent.trim();
-    // `parentFallback` is `null` for a subtask, and `blockingIssues` has
-    // already refused an empty one, so the `??` cannot yield null here for
+    // `parentFallback` is `null` for every kind, and `blockingIssues` has
+    // already refused an empty parent, so this cannot yield null here for
     // a draft that passed validation.
     body[spec.parentField] = named === "" ? spec.parentFallback : named;
   }

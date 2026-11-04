@@ -13,6 +13,8 @@ import { TrustBadge } from "@/components/chips/TrustBadge";
 import { showsTrustBadge, trustPresentation } from "@/lib/board/trust";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { RepoChip } from "@/components/chips/RepoChip";
+import { showRepoTag } from "@/lib/design/repo-tag";
+import { holderLabel } from "@/lib/design/holder-label";
 import { relativeTime } from "@/lib/projects/view";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
 import { LinkChips } from "@/components/chips/LinkChips";
@@ -291,8 +293,11 @@ export function ItemCard({
         <ul className={styles.cardPresence}>
           {entry.assignments.map((assignment) => (
             <li key={`${assignment.holderId}-${assignment.role}`} className={styles.presenceRow}>
-              <AgentPresenceDot liveness={assignment.liveness} agentName={assignment.displayName} />
-              <span className={styles.presenceName}>{assignment.displayName}</span>
+              <AgentPresenceDot
+                liveness={assignment.liveness}
+                agentName={holderLabel(assignment)}
+              />
+              <span className={styles.presenceName}>{holderLabel(assignment)}</span>
               <span className={styles.presenceAge}>{relativeTime(assignment.lastActive, now)}</span>
             </li>
           ))}
@@ -306,7 +311,7 @@ export function ItemCard({
       <div className={styles.cardMeta}>
         <span className={styles.state}>{entry.item.state.replace(/_/g, " ")}</span>
         <AreaChip area={entry.item.area} />
-        {entry.item.repo && <RepoChip repo={entry.item.repo} />}
+        {showRepoTag(entry.item.area, entry.item.repo) && <RepoChip repo={entry.item.repo} />}
       </div>
       {/* The item's external pointers — the chat thread, the ticket, the
           design doc — as key-only chips.

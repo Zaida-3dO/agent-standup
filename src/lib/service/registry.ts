@@ -158,6 +158,7 @@ import { takeover } from "./operations/takeover";
 // one capability with three directions. Waived off MCP as three names and
 // reachable as one plus an action (`@/lib/adapters/waivers`).
 import { ownership } from "./operations/ownership";
+import { doc } from "./operations/doc";
 // The four ways an agent puts something on an item's record — a resume
 // point, a remark, a produced artifact, a capability gap — behind one tool.
 // One act seen four times, and the fold states the checkpoint/note
@@ -304,6 +305,12 @@ import { registerSession } from "./operations/register-session";
 // answers is decided by `ENABLE_BACKFILL`, and which adapters expose it is
 // decided by `../adapters/waivers.ts`.
 import { backfill } from "./operations/backfill";
+// Documents (docs/plans/SCHEMA.md §8c): keyed JSON entries attached to an
+// item, for anything too big, technical or agent-only for the fields a
+// person reads. Loaded on demand and absent from every item read.
+import { docPatch } from "./operations/doc-patch";
+import { docGet } from "./operations/doc-get";
+import { docList } from "./operations/doc-list";
 
 /**
  * Every service operation, by name.
@@ -357,6 +364,7 @@ export const OPERATION_REGISTRY = {
   [sweep.name]: sweep,
   [takeover.name]: takeover,
   [ownership.name]: ownership,
+  [doc.name]: doc,
   [record.name]: record,
   [heartbeat.name]: heartbeat,
   [checkpoint.name]: checkpoint,
@@ -422,6 +430,9 @@ export const OPERATION_REGISTRY = {
   [getSessionDetail.name]: getSessionDetail,
   [registerSession.name]: registerSession,
   [backfill.name]: backfill,
+  [docPatch.name]: docPatch,
+  [docGet.name]: docGet,
+  [docList.name]: docList,
 } as const satisfies Record<string, AnyOperation>;
 
 export type OperationRegistry = typeof OPERATION_REGISTRY;

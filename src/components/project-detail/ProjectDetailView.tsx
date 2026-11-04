@@ -26,6 +26,8 @@ import {
 } from "@/lib/project-detail/view";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { RepoChip } from "@/components/chips/RepoChip";
+import { showRepoTag } from "@/lib/design/repo-tag";
+import { holdersLabel } from "@/lib/design/holder-label";
 import { DerivedStatePanel } from "./DerivedStatePanel";
 import { RepairPanel } from "./RepairPanel";
 import styles from "./ProjectDetail.module.css";
@@ -92,7 +94,9 @@ export function ProjectDetailView({
         )}
         <div className={styles.headerMeta}>
           <AreaChip area={detail.project.area} />
-          {detail.project.repo !== null && <RepoChip repo={detail.project.repo} />}
+          {showRepoTag(detail.project.area, detail.project.repo) && (
+            <RepoChip repo={detail.project.repo} />
+          )}
           {crew > 0 && (
             <span
               className={styles.crew}
@@ -169,25 +173,22 @@ export function ProjectDetailView({
           </span>
         </div>
         {children.length === 0 ? (
-          // An empty result and a failed one must not render identically —
-          // and this particular empty is the structural fault the repair
-          // panel above addresses, so it says so rather than reading as an
-          // ordinary "nothing here yet".
+          // An empty result and a failed one must not render identically.
+          // An empty project is simply not started, so it says that in
+          // plain words rather than reading as a fault.
           <p className={styles.empty} data-empty-reason="no-children">
-            Nothing under this project. Because a project&apos;s state derives from its children,
-            there is nothing here to transition and nothing whose completion would resolve it.
+            Not started: nothing is under this project yet. Its state follows its children, so it
+            will move once some work is added.
           </p>
         ) : (
           <ul className={styles.list}>
             {children.map((child) => (
               <li
                 key={child.id}
-                className={`${styles.child}${child.childless ? ` ${styles.childSuspect}` : ""}`}
+                className={styles.child}
                 data-child-id={child.id}
-                // The same flag the grid's cards carry, for the same
-                // reason and under the same name — a nested project with
-                // nothing under it is stuck in exactly the way this page's
-                // own subject is.
+                // Kept as data for the tests and for scripts; an empty
+                // project is not started, which needs nothing from a person.
                 data-childless={child.childless ? "true" : "false"}
               >
                 <Link href={`/items/${child.id}`} className={styles.childTitle}>
@@ -207,15 +208,11 @@ export function ProjectDetailView({
                       {child.merged}/{child.total} merged
                     </span>
                   )}
-                  {child.childless && (
-                    <span className={styles.childFlag} data-suspect-reason="no-children">
-                      No work under it
-                    </span>
-                  )}
+                  {child.childless && <span className={styles.childNotStarted}>Not started</span>}
                   {child.assignments.length > 0 && (
                     <span className={styles.crew}>
                       <span className={styles.crewDot} aria-hidden="true" />
-                      {child.assignments.map((a) => a.displayName).join(", ")}
+                      {holdersLabel(child.assignments)}
                     </span>
                   )}
                   <span>{relativeTime(child.updatedAt, now)}</span>

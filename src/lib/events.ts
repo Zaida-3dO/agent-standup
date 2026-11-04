@@ -10,6 +10,7 @@
 // `docs/plans/SCHEMA.md` §3 and `src/lib/service/context.ts`.
 import type { TransactionHandle } from "./service/context";
 import { insertEventRow, type EventFields } from "./events-insert";
+import { fieldChangePayload } from "./event-summary";
 
 export type { ActorType, AppendedEvent, EventActor, EventType } from "./events-insert";
 import type { ActorType, AppendedEvent, EventActor, EventType } from "./events-insert";
@@ -84,6 +85,13 @@ export async function appendEvent(
  * assumes primitives only, and a shallow reference comparison would treat
  * two structurally identical objects as "changed" on every call.
  *
+ * **A large value is summarised, not copied.** When either side serialises to
+ * more than `FIELD_CHANGE_INLINE_LIMIT` characters the payload records that the
+ * field changed, both sizes and a short hash of each side (plus the changed
+ * keys of an object-valued field) instead of `from`/`to` — see
+ * `event-summary.ts`. Every writer of a field change goes through here, so this
+ * is the one place the limit has to hold. Small values keep `{field, from, to}`.
+ *
  * Returns the rows actually written, so a caller that wants to know whether
  * anything changed (e.g. to skip bumping `updatedAt`) doesn't have to
  * recompute the diff itself.
@@ -111,7 +119,7 @@ export async function recordFieldChanges(
         actor: args.actor,
         assignmentId: args.assignmentId,
         type: "field_change",
-        payload: { field, from: args.before[field] ?? null, to: args.after[field] ?? null },
+        payload: fieldChangePayload(field, args.before[field] ?? null, args.after[field] ?? null),
       }),
     );
   }
@@ -251,6 +259,7 @@ export async function readSinceBounded(
     readonly limit?: number;
     readonly full: true;
     readonly withNewestId?: boolean;
+    readonly types?: readonly string[];
   },
 ): Promise<{ events: EventRow[]; horizon: bigint; newestId: bigint | null }>;
 export async function readSinceBounded(
@@ -260,6 +269,7 @@ export async function readSinceBounded(
     readonly limit?: number;
     readonly full?: false;
     readonly withNewestId?: boolean;
+    readonly types?: readonly string[];
   },
 ): Promise<{ events: SlimEventRow[]; horizon: bigint; newestId: bigint | null }>;
 export async function readSinceBounded(
@@ -269,6 +279,7 @@ export async function readSinceBounded(
     readonly limit?: number;
     readonly full?: boolean;
     readonly withNewestId?: boolean;
+    readonly types?: readonly string[];
   },
 ): Promise<{ events: (EventRow | SlimEventRow)[]; horizon: bigint; newestId: bigint | null }> {
   const horizon = await visibilityHorizon(db);
@@ -279,15 +290,22 @@ export async function readSinceBounded(
   // should be the safe one. `orientation` passes `full: true` explicitly
   // because its "what changed" list renders the payload.
   const full = args.full ?? false;
+  // An optional type filter, applied in the `WHERE` so `limit` counts only
+  // the rows asked for. The caller supplies the names as one bound array and
+  // the cast to the enum happens in Postgres; the operation layer has
+  // already checked them against the enum's labels, so a name that is not an
+  // event type never reaches here. An absent or empty list means every type.
+  const types = args.types !== undefined && args.types.length > 0 ? [...args.types] : null;
   const rows = await db.$queryRawUnsafe<(EventRow | SlimEventRow)[]>(
     `SELECT ${eventColumnsFor(full)}
      FROM "Event"
-     WHERE "id" > $1 AND "txId" < $2
+     WHERE "id" > $1 AND "txId" < $2${types === null ? "" : ` AND "type" = ANY($4::text[]::"EventType"[])`}
      ORDER BY "id" ASC
      LIMIT $3`,
     args.since,
     horizon,
     limit,
+    ...(types === null ? [] : [types]),
   );
 
   // The newest id under the *same* visibility bound the slice used. Bounded

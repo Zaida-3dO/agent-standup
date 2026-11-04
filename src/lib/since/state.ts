@@ -29,6 +29,14 @@ export interface FetchFeedOptions {
    * that reads `payload` and passes `full: true` for it.
    */
   readonly full?: boolean;
+  /**
+   * Only events of these types, sent as one repeated `types` parameter each.
+   * Omitted when absent or empty (an empty list means "every type" here, not
+   * "none" — the server refuses an empty `types`, so sending nothing is the
+   * only spelling of "no filter"). The Standup overnight report uses it to
+   * ask for `state_change` events in full while reading everything else slim.
+   */
+  readonly types?: readonly string[];
 }
 
 /**
@@ -54,6 +62,7 @@ export function buildFeedQuery(options: FetchFeedOptions = {}): string {
   if (options.since !== undefined) params.set("since", options.since);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.full) params.set("full", "true");
+  for (const type of options.types ?? []) params.append("types", type);
   const query = params.toString();
   return query === "" ? uiApiPath("/api/events") : uiApiPath(`/api/events?${query}`);
 }

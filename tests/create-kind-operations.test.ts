@@ -37,8 +37,8 @@ interface Created {
   title: string;
   /** Present only when the title departs from the convention (MILESTONES.md #131). */
   titleAdvice?: string;
-  /** Present only when `projectId` resolved to the inbox catch-all. */
-  projectAdvice?: string;
+  /** Present only when the headline, body or a subtask's title departs from the people-first rules. */
+  fieldAdvice?: string;
 }
 
 interface Rejection {
@@ -269,12 +269,22 @@ describeIfDb("explicit create operations", () => {
     });
   });
 
-  describe('create_task with projectId "inbox"', () => {
+  // The Inbox still exists as a place existing items can be moved into
+  // (`reparent_item` with `parentId: "inbox"`); only creating new work there is
+  // refused. These cases pin the resolver that move goes through.
+  describe('reparent_item with parentId "inbox"', () => {
+    /** Files a fresh childless project under the Inbox, which makes it a task there. */
+    async function intoInbox(title: string, area: string, rt: ServiceRuntime = runtime) {
+      const stuck = (await rt.call("create_project", base(title, area))) as Created;
+      return (await rt.call("reparent_item", {
+        id: stuck.id,
+        parentId: "inbox",
+        full: true,
+      })) as Created;
+    }
+
     it("creates the inbox project on first use and files the task under it", async () => {
-      const task = await call("create_task", {
-        ...base("Captured quickly", "inbox-area"),
-        projectId: "inbox",
-      });
+      const task = await intoInbox("Captured quickly", "inbox-area");
 
       expect(task.kind).toBe("task");
       expect(task.parentId).not.toBeNull();
@@ -292,14 +302,8 @@ describeIfDb("explicit create operations", () => {
     // Fails if `resolveInboxProject` drops its SELECT and always inserts —
     // the two tasks would land under two different projects.
     it("reuses the same inbox project on a second capture", async () => {
-      const first = await call("create_task", {
-        ...base("First capture", "inbox-reuse"),
-        projectId: "inbox",
-      });
-      const second = await call("create_task", {
-        ...base("Second capture", "inbox-reuse"),
-        projectId: "inbox",
-      });
+      const first = await intoInbox("First capture", "inbox-reuse");
+      const second = await intoInbox("Second capture", "inbox-reuse");
 
       expect(second.parentId).toBe(first.parentId);
 
@@ -318,20 +322,14 @@ describeIfDb("explicit create operations", () => {
       // at a real row. The only symptom is that capture stops appearing.
       //
       // Fails if the `archivedAt IS NULL` term is dropped from the lookup.
-      const first = await call("create_task", {
-        ...base("Before the archive", "inbox-archived"),
-        projectId: "inbox",
-      });
+      const first = await intoInbox("Before the archive", "inbox-archived");
 
       await prisma.$executeRawUnsafe(
         `UPDATE "Item" SET "archivedAt" = CURRENT_TIMESTAMP WHERE "id" = $1`,
         first.parentId,
       );
 
-      const second = await call("create_task", {
-        ...base("After the archive", "inbox-archived"),
-        projectId: "inbox",
-      });
+      const second = await intoInbox("After the archive", "inbox-archived");
 
       // A different project — the sentinel minted a fresh inbox, exactly as
       // it would on a database where none had ever existed.
@@ -351,14 +349,8 @@ describeIfDb("explicit create operations", () => {
       // every capture mint a new project. Fails if the lookup is broken
       // outright rather than narrowed — which the archived test alone would
       // not catch, since a resolver that always inserts also passes it.
-      const first = await call("create_task", {
-        ...base("One", "inbox-live-control"),
-        projectId: "inbox",
-      });
-      const second = await call("create_task", {
-        ...base("Two", "inbox-live-control"),
-        projectId: "inbox",
-      });
+      const first = await intoInbox("One", "inbox-live-control");
+      const second = await intoInbox("Two", "inbox-live-control");
       expect(second.parentId).toBe(first.parentId);
     });
 
@@ -375,10 +367,7 @@ describeIfDb("explicit create operations", () => {
           }),
       });
 
-      const task = (await configured.call("create_task", {
-        ...base("Into the configured inbox", "configured-inbox"),
-        projectId: "inbox",
-      })) as Created;
+      const task = await intoInbox("Into the configured inbox", "configured-inbox", configured);
 
       const parent = await prisma.$queryRawUnsafe<{ title: string }[]>(
         `SELECT "title" FROM "Item" WHERE "id" = $1`,
@@ -390,10 +379,7 @@ describeIfDb("explicit create operations", () => {
     // The inbox is an item, so its creation is a ledger row like any other
     // (SCHEMA.md §3). Fails if the resolver's `appendEvent` call is removed.
     it("records the inbox project's creation in the event ledger", async () => {
-      const task = await call("create_task", {
-        ...base("Ledger check", "inbox-ledger-area"),
-        projectId: "inbox",
-      });
+      const task = await intoInbox("Ledger check", "inbox-ledger-area");
       // A fresh scratch DB shares one "Inbox" across this file, so the
       // parent may pre-date this call — assert it has an event, not that it
       // has exactly one from this call.
@@ -705,6 +691,24 @@ describeIfDb("explicit create operations", () => {
       expect(payload.error.code).toBe("invalid_input");
     });
 
+    // The HTTP path is one of the ways work could be filed into the Inbox. Fails
+    // if the route resolves the shortcut again: a 201 and a new row.
+    it("POST /api/tasks refuses the inbox shortcut with a 4xx and writes nothing", async () => {
+      const rows = () =>
+        prisma.$queryRawUnsafe<{ count: bigint }[]>(
+          `SELECT COUNT(*)::bigint AS "count" FROM "Item"`,
+        );
+      const before = Number((await rows())[0]?.count);
+      const response = await routes.tasks.POST(
+        post("/api/tasks", { ...base("Aimed at the inbox", "route-area"), projectId: "inbox" }),
+      );
+      expect(response.status).toBe(400);
+      const payload = (await response.json()) as { error: { code: string; fields?: string[] } };
+      expect(payload.error.code).toBe("invalid_input");
+      expect(payload.error.fields).toEqual(["projectId"]);
+      expect(Number((await rows())[0]?.count)).toBe(before);
+    });
+
     it("maps an unknown parent to 404", async () => {
       const response = await routes.tasks.POST(
         post("/api/tasks", { ...base("Bad parent", "route-area"), projectId: "nope" }),
@@ -892,46 +896,266 @@ describeIfDb("explicit create operations", () => {
     });
   });
 
-  // ── The catch-all project literal, advised rather than silent (same
-  // batch) ───────────────────────────────────────────────────────────────
+  // ── The people-first fields: what a person reads on the board ──────────
   //
-  // `"inbox"` stays fully supported — this suite does not remove it, only
-  // asserts that resolving to it is now visible on the response.
-  describe("the catch-all project advisory", () => {
-    // Fails if `projectAdvice` stops firing when a create resolves
-    // `projectId` to the inbox sentinel — the whole point of #131's
-    // mechanism being reused for this field.
-    it("says so when create_task resolves projectId to the inbox", async () => {
-      const task = await call("create_task", {
-        ...base("File this for triage later", "catch-all"),
-        projectId: "inbox",
-      });
-      expect(task.projectAdvice).toBeDefined();
-      expect(task.projectAdvice).toContain("inbox");
+  // Titles, headlines and bodies are answered with notes, never refusals --
+  // the same advisory posture as the title convention above. Each case
+  // pairs a note that must appear with one that must not, so a check that
+  // fires on everything (or nothing) fails here.
+  describe("the people-first fields", () => {
+    it("answers a title with a separator, a date and a codename, and still creates it", async () => {
+      const item = await call(
+        "create_project",
+        base("Garden Planner - wave 2 fixes from 2026-10-29", "people-first"),
+      );
+      expect(item.id).toBeTruthy();
+      expect(item.title).toBe("Garden Planner - wave 2 fixes from 2026-10-29");
+      expect(item.titleAdvice).toBeDefined();
+      expect(item.titleAdvice).toContain("separator");
+      expect(item.titleAdvice).toContain("date");
+      expect(item.titleAdvice).toContain("codename");
     });
 
-    // Fails if a create naming a real project is advised anyway, which
-    // would make the note meaningless noise on the overwhelmingly common
-    // path.
-    it("says nothing when a real project is named", async () => {
+    it("says nothing about a short plain name with a plain one-sentence headline", async () => {
+      const item = await call("create_project", {
+        ...base("Garden Planner", "people-first"),
+        headline: "Tidying the garden with paths, borders and planters.",
+      });
+      expect(item.titleAdvice).toBeUndefined();
+      expect(item.fieldAdvice).toBeUndefined();
+    });
+
+    it("flags a headline that repeats the title, and stores it anyway", async () => {
+      const project = await call("create_project", base("Print shop", "people-first"));
+      const item = await call("create_task", {
+        ...base("Order history shows refunds", "people-first"),
+        headline: "12 Mar #8 - Order history shows refunds",
+        projectId: project.id,
+      });
+      expect(item.fieldAdvice).toBeDefined();
+      expect(item.fieldAdvice).toContain("repeats the title");
+      // The same headline also carries a date and a request number.
+      expect(item.fieldAdvice).toContain("date");
+      const rows = await prisma.$queryRawUnsafe<{ headline: string }[]>(
+        `SELECT "headline" FROM "Item" WHERE "id" = $1`,
+        item.id,
+      );
+      expect(rows[0]?.headline).toBe("12 Mar #8 - Order history shows refunds");
+    });
+
+    it("flags a headline that carries an approval quote and a link", async () => {
+      const item = await call("create_project", {
+        ...base("Viewer links", "people-first"),
+        headline:
+          'UserA said "go ahead and start please" - see https://example.com/spec for details.',
+      });
+      expect(item.fieldAdvice).toContain("quotes someone");
+      expect(item.fieldAdvice).toContain("web address");
+    });
+
+    it("flags a very large body and says to attach a document, storing the body whole", async () => {
+      const body = "b".repeat(5_000);
+      const item = await call("create_project", { ...base("Big notes", "people-first"), body });
+      expect(item.fieldAdvice).toContain("document");
+      const rows = await prisma.$queryRawUnsafe<{ length: number }[]>(
+        `SELECT length("body")::int AS "length" FROM "Item" WHERE "id" = $1`,
+        item.id,
+      );
+      expect(rows[0]?.length).toBe(5_000);
+    });
+
+    it("stays quiet about a body at an ordinary length", async () => {
+      const item = await call("create_project", {
+        ...base("Ordinary notes", "people-first"),
+        body: "b".repeat(3_000),
+      });
+      expect(item.fieldAdvice).toBeUndefined();
+    });
+
+    it("says a subtask that reads like an implementation step should be a loop", async () => {
+      const project = await call("create_project", base("Admin site", "people-first"));
+      const task = await call("create_task", {
+        ...base("Move the settings page to its own address", "people-first"),
+        projectId: project.id,
+      });
+      const step = await call("create_subtask", {
+        ...base("Split the worker queue and the scheduler", "people-first"),
+        taskId: task.id,
+      });
+      expect(step.fieldAdvice).toContain("loops");
+      expect(step.fieldAdvice).toContain("parent task");
+
+      const result = await call("create_subtask", {
+        ...base("Show the new address in the sign-in email", "people-first"),
+        taskId: task.id,
+      });
+      expect(result.fieldAdvice).toBeUndefined();
+    });
+
+    it("does not read a TASK's title as an implementation step", async () => {
+      // Only subtasks are checked: a task with a step-shaped title is a
+      // title question, not a "should have been a loop" one.
+      const project = await call("create_project", base("Mailer", "people-first"));
+      const task = await call("create_task", {
+        ...base("Refactor the mailer", "people-first"),
+        projectId: project.id,
+      });
+      expect(task.fieldAdvice).toBeUndefined();
+    });
+
+    it("states the people-first convention in every create's contract", async () => {
+      const { OPERATION_REGISTRY } = await import("@/lib/service/registry");
+      for (const name of ["create_project", "create_task", "create_subtask"]) {
+        const rules = OPERATION_REGISTRY[name as "create_project"].contract?.rules ?? [];
+        const rule = rules.find((r) => r.fields.includes("headline") && r.fields.includes("body"));
+        expect(rule, `${name} states the field convention`).toBeDefined();
+        expect(rule?.rule).toContain("document");
+        expect(rule?.rule).toContain("loops");
+      }
+    });
+
+    describe("on update_item", () => {
+      it("flags a headline edited to repeat the stored title", async () => {
+        const item = await call("create_project", base("Reset flow", "people-first"));
+        const updated = await call("update_item", { id: item.id, headline: "Reset flow" });
+        expect(updated.fieldAdvice).toContain("repeats the title");
+      });
+
+      it("flags a TITLE edited to equal the stored headline", async () => {
+        const item = await call("create_project", {
+          ...base("Reset flow", "people-first"),
+          headline: "Let people reset a forgotten password.",
+        });
+        const updated = await call("update_item", {
+          id: item.id,
+          title: "Let people reset a forgotten password",
+        });
+        expect(updated.fieldAdvice).toContain("repeats the title");
+      });
+
+      it("flags a very large body edit", async () => {
+        const item = await call("create_project", base("Notes holder", "people-first"));
+        const updated = await call("update_item", { id: item.id, body: "b".repeat(5_000) });
+        expect(updated.fieldAdvice).toContain("document");
+      });
+
+      it("flags a title edit with a version number", async () => {
+        const item = await call("create_project", base("Release prep", "people-first"));
+        const updated = await call("update_item", {
+          id: item.id,
+          title: "Ship the 1.4.2 fixes",
+        });
+        expect(updated.titleAdvice).toContain("version");
+      });
+
+      it("says nothing when the edit touches neither title, headline nor body", async () => {
+        // A stored headline that repeats the title is NOT re-reported on an
+        // unrelated edit: only the fields this call wrote are examined.
+        const item = await call("create_project", {
+          ...base("Reset flow", "people-first"),
+          headline: "Reset flow",
+        });
+        const updated = await call("update_item", { id: item.id, priority: "P1" });
+        expect(updated.fieldAdvice).toBeUndefined();
+        expect(updated.titleAdvice).toBeUndefined();
+      });
+
+      it("says nothing for a plain edit, and nothing when the headline is cleared", async () => {
+        const item = await call("create_project", {
+          ...base("Reset flow", "people-first"),
+          headline: "Let people reset a forgotten password.",
+        });
+        const plain = await call("update_item", {
+          id: item.id,
+          headline: "People can reset a password without asking for help.",
+        });
+        expect(plain.fieldAdvice).toBeUndefined();
+        const cleared = await call("update_item", { id: item.id, headline: null });
+        expect(cleared.fieldAdvice).toBeUndefined();
+      });
+    });
+  });
+
+  // ── The Inbox takes no new work, by any path ──────────────────────────
+  //
+  // `create_task` owns the refusal and `create_work` delegates to it, so one
+  // handler answers for both. Each case asserts that nothing was written.
+  describe("the Inbox is refused as a project", () => {
+    async function itemCount(): Promise<number> {
+      const rows = await prisma.$queryRawUnsafe<{ count: bigint }[]>(
+        `SELECT COUNT(*)::bigint AS "count" FROM "Item"`,
+      );
+      return Number(rows[0]?.count ?? 0n);
+    }
+
+    /** The Inbox project: a live root titled with the `items.inbox_project` setting. */
+    async function seedInbox(): Promise<string> {
+      const inbox = await call("create_project", {
+        ...base(String(defaultSnapshot().values["items.inbox_project"]), "catch-all"),
+      });
+      return inbox.id;
+    }
+
+    // Fails if the literal "inbox" resolves again in create_task.
+    for (const name of ["create_task", "create_work"] as const) {
+      const extra = name === "create_work" ? { type: "task" } : {};
+
+      it(`${name} refuses the literal "inbox" and writes nothing`, async () => {
+        const before = await itemCount();
+        const rejection = await rejectionOf(name, {
+          ...extra,
+          ...base("File this for triage later", "catch-all"),
+          projectId: "inbox",
+        });
+        expect(rejection.code).toBe("invalid_input");
+        expect(rejection.fields).toEqual(["projectId"]);
+        expect(rejection.message).toContain("The Inbox does not take new work");
+        expect(rejection.message).toContain("project list");
+        expect(await itemCount()).toBe(before);
+      });
+
+      it(`${name} refuses the id of the Inbox project and writes nothing`, async () => {
+        const inboxId = await seedInbox();
+        const before = await itemCount();
+        const rejection = await rejectionOf(name, {
+          ...extra,
+          ...base("Filed by id", "catch-all"),
+          projectId: inboxId,
+        });
+        expect(rejection.code).toBe("invalid_input");
+        expect(rejection.fields).toEqual(["projectId"]);
+        expect(await itemCount()).toBe(before);
+      });
+    }
+
+    // A repair is a bulk move into the named project, so the Inbox is refused
+    // there too, before the scan runs (a dry run included).
+    for (const apply of [false, true]) {
+      it(`repair_stuck_projects refuses the Inbox as a destination (apply: ${apply})`, async () => {
+        const stuck = await call("create_project", base("A stuck root", "catch-all"));
+        for (const projectId of ["inbox", await seedInbox()]) {
+          const rejection = await rejectionOf("repair_stuck_projects", { projectId, apply });
+          expect(rejection.code).toBe("invalid_input");
+          expect(rejection.fields).toEqual(["projectId"]);
+          expect(rejection.message).toContain("The Inbox does not take new work");
+        }
+        // Nothing moved: the stuck root is still a root.
+        const rows = await prisma.$queryRawUnsafe<{ parentId: string | null }[]>(
+          `SELECT "parentId" FROM "Item" WHERE "id" = $1`,
+          stuck.id,
+        );
+        expect(rows[0]?.parentId).toBeNull();
+      });
+    }
+
+    // Fails if the refusal is over-broad: an ordinary project still takes a task.
+    it("still files a task under a real project", async () => {
       const project = await call("create_project", base("A real destination", "catch-all"));
       const task = await call("create_task", {
         ...base("Filed under the real project", "catch-all"),
         projectId: project.id,
       });
-      expect(task.projectAdvice).toBeUndefined();
-    });
-
-    // `create_work` dispatches to `create_task`'s own handler and returns
-    // its result unedited (create-work.ts) — fails if that delegation ever
-    // stops carrying the advisory through.
-    it("carries the advisory through create_work's task delegation", async () => {
-      const task = await call("create_work", {
-        type: "task",
-        ...base("Filed via create_work with no project", "catch-all"),
-        projectId: "inbox",
-      });
-      expect(task.projectAdvice).toBeDefined();
+      expect(task.parentId).toBe(project.id);
     });
   });
 });

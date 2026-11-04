@@ -10,8 +10,8 @@
 // **Three fields — title, area, priority** — plus the kind being minted and,
 // when the kind needs one, its parent. The kind is not a fourth question in
 // disguise: it defaults to `task`, which is what a person capturing a
-// thought almost always means, and a task with no project named files itself
-// in the inbox. So the shortest path really is title, area, go.
+// thought almost always means, and a task names the project it belongs under
+// (the Inbox takes no new work). So the shortest path is title, area, project, go.
 //
 // ── Hook-free and prop-driven, like every other view in this split ───────
 //
@@ -32,7 +32,6 @@
 // `draft`, `onChange`, `onSubmit` and `onCancel`, and it renders.
 import { CREATE_KINDS, CREATE_KIND_ORDER, CREATE_PRIORITIES } from "@/lib/create/kinds";
 import type { CreateKind, CreatePriority } from "@/lib/create/kinds";
-import { INBOX_PROJECT_ID } from "@/lib/create/inbox";
 import {
   blockingIssues,
   isPristine,
@@ -273,23 +272,10 @@ export function QuickCreateDialog({
                 id={FIELD_IDS.parent}
                 className={styles.input}
                 value={draft.parent}
-                placeholder={
-                  spec.parentFallback === INBOX_PROJECT_ID
-                    ? `Project id — leave empty to file in the ${INBOX_PROJECT_ID}`
-                    : "Task id"
-                }
+                placeholder={spec.parentField === "projectId" ? "Project id" : "Task id"}
                 aria-invalid={parentIssue !== null}
                 onChange={(event) => onChange({ ...draft, parent: event.target.value })}
               />
-              {/* Stated up front, not discovered. An empty project field is
-                  a legal, named choice — the `"inbox"` sentinel — and a
-                  person who does not know that will go and create a project
-                  they did not need. */}
-              {spec.parentFallback === INBOX_PROJECT_ID && parentIssue === null && (
-                <p className={styles.hint}>
-                  Leave this empty and the task is filed in the inbox project.
-                </p>
-              )}
               {parentIssue !== null && (
                 <p className={styles.fieldError} role="alert">
                   {parentIssue.message}

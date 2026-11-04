@@ -232,6 +232,13 @@ export const UNWRAP = {
   kill_guard: null,
   backfill: null,
 
+  // Documents. `doc_get` and `doc_list` answer their page whole (entries and
+  // `nextCursor`); `doc_patch` answers the new revision and the keys it
+  // changed, which is the part a caller needs.
+  doc_get: null,
+  doc_list: null,
+  doc_patch: null,
+
   // The intervention catalogue's configuration surface, under
   // `/api/interventions/**` rather than `/api/settings/**` because these keys
   // are deliberately outside `SETTINGS_REGISTRY` and the settings routes

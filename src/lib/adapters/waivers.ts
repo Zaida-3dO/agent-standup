@@ -1338,6 +1338,45 @@ export const ADAPTER_WAIVERS: readonly AdapterWaiver[] = Object.freeze([
       "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
       "is identical on both.",
   },
+  {
+    adapter: "mcp_http",
+    operation: "doc_get",
+    reason:
+      "Folded into the single `doc` tool as action get. Reading some entries of a document, reading one document across an item's children, and writing some keys are one capability seen three ways, and they point at each other: get returns the `rev` that patch takes as `ifRev`, and a patch conflict tells the caller to read again. Three tools would spend an MCP tool list's per-session context three times to describe one decision. Still exposed on HTTP and the command line. It runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "doc_get",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "doc_list",
+    reason:
+      "Folded into the single `doc` tool as action list. Same capability as action get: the same document, read across an item's children rather than on one item, with its own parent field (`parentId`) so the tool never has to make one field mean two things. Still exposed on HTTP and the command line. It runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "doc_list",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
+  {
+    adapter: "mcp_http",
+    operation: "doc_patch",
+    reason:
+      "Folded into the single `doc` tool as action patch. The write half of the same capability. This operation can be refused (a conflict on `ifRev`) but runs no registered guard, so a fold loses no guard coverage: the delegate runs through its own schema and handler in the same context and throws the same refusal object. Still exposed on HTTP and the command line. It runs no state transition, so §22's bound on waivers is satisfied.",
+  },
+  {
+    adapter: "mcp_stdio",
+    operation: "doc_patch",
+    reason:
+      "Same as mcp_http — one MCP surface, two transports, and the per-session tool-list cost " +
+      "is identical on both.",
+  },
 ]);
 
 /** Whether `adapter` deliberately does not expose `operation`. */

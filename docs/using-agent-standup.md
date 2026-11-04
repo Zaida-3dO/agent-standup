@@ -110,8 +110,18 @@ could not state intent. Use the tool that names it:
 
 - **`create_project`** — a root container. Has no state of its own; its state derives from its
   children, so `transition_item` on a project is refused. **Transition the child, never the project.**
-- **`create_task`** — pass `projectId`, or the literal `"inbox"`.
+- **`create_task`** — pass `projectId`, the id of a real project (list them with `project list`). The
+  Inbox takes no new work: every way of creating a task (`create_task`, `create_work`, the HTTP API,
+  the command line and the quick-create dialog) refuses `"inbox"` and the Inbox's own id, and
+  `repair_stuck_projects` refuses them as a destination.
 - **`create_subtask`** — pass `taskId`.
+
+The board is read by people, so keep it plain. A title is a short name (a few words); the headline is
+one plain sentence that says something the title does not. Neither carries dates, author tags, ids,
+quotes, approvals, codenames, branch names or versions. Create a task only for a result a person would
+recognise, and record the steps toward it as loops on the task rather than as subtasks. Anything big
+or technical goes in a document. A write that departs from this still succeeds and returns a
+`titleAdvice` or `fieldAdvice` note saying what to change.
 
 All three require **`originType`**. Use `"auto"` unless a person really did ask for it;
 `originType: "person"` needs `originPersonId`, and on a fresh database the person table may be empty.

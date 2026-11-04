@@ -74,6 +74,7 @@ import {
 // reader cannot drift apart on it, and a project's column on the detail
 // view has to be the column the board shows for that same project.
 import { resolveItemId } from "../items/resolve-id";
+import { summariseDocuments, type ItemDocumentSummary } from "./documents-shared";
 import { columnForProject, columnForState, type BoardColumn } from "../board/columns";
 import type { ItemStateValue } from "../state-machine/states";
 import {
@@ -285,6 +286,15 @@ export interface ItemDetailOutput {
    * module header.
    */
   readonly previousHolders: readonly ItemDetailAssignment[];
+  /**
+   * The documents this item carries, one summary each — name, entry count
+   * and size, never a value. Empty when it has none.
+   *
+   * Counts only, so the detail stays small however large a document grows;
+   * the entries are read with `doc_get`. This is what lets the item page say
+   * "notes: 12 entries, 9 KB" without carrying the progress.
+   */
+  readonly documents: readonly ItemDocumentSummary[];
 }
 
 interface RawSubtreeRow {
@@ -639,6 +649,7 @@ export const getItemDetail = defineOperation({
       buildStatus,
       assignments,
       previousHolders,
+      documents: await summariseDocuments(ctx.db, id),
     };
   },
 });

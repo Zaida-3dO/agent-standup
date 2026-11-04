@@ -38,6 +38,8 @@ import { StatusPicker } from "./StatusPicker";
 import { PriorityChip } from "@/components/chips/PriorityChip";
 import { AreaChip } from "@/components/chips/AreaChip";
 import { RepoChip } from "@/components/chips/RepoChip";
+import { showRepoTag } from "@/lib/design/repo-tag";
+import { holderLabel } from "@/lib/design/holder-label";
 import { TrustBadge } from "@/components/chips/TrustBadge";
 import { showsTrustBadge, trustPresentation } from "@/lib/board/trust";
 import { AgentPresenceDot } from "@/components/chips/AgentPresenceDot";
@@ -447,7 +449,9 @@ export function ListView({
                               server and client for the same data. */}
                           <span className={styles.rowMeta} aria-hidden="true">
                             <AreaChip area={entry.item.area} />
-                            {entry.item.repo && <RepoChip repo={entry.item.repo} />}
+                            {showRepoTag(entry.item.area, entry.item.repo) && (
+                              <RepoChip repo={entry.item.repo} />
+                            )}
                           </span>
                           {/* What this row holds, the same rollup the kanban
                               card shows (#275). Rendered from
@@ -493,7 +497,9 @@ export function ListView({
                         </td>
                         <td className={styles.colArea}>
                           <AreaChip area={entry.item.area} />
-                          {entry.item.repo && <RepoChip repo={entry.item.repo} />}
+                          {showRepoTag(entry.item.area, entry.item.repo) && (
+                            <RepoChip repo={entry.item.repo} />
+                          )}
                         </td>
                         <td className={styles.colOwner}>
                           {/* One line per live assignment — SCHEMA.md §2
@@ -506,7 +512,7 @@ export function ListView({
                               className={styles.owner}
                             >
                               <AgentPresenceDot liveness={assignment.liveness} />
-                              <span className={styles.ownerName}>{assignment.displayName}</span>
+                              <span className={styles.ownerName}>{holderLabel(assignment)}</span>
                               <span className={styles.ownerAge}>
                                 {relativeTime(assignment.lastActive, now)}
                               </span>

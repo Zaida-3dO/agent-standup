@@ -27,6 +27,7 @@ import { StateChip } from "@/components/chips/StateChip";
 import { PriorityChip } from "@/components/chips/PriorityChip";
 import type { ItemState } from "@/lib/board/types";
 import type { Priority } from "@/lib/design/tokens";
+import { holderLabel } from "@/lib/design/holder-label";
 import { columnTitle } from "@/lib/board/view";
 import { showsOwnState } from "@/lib/item-detail/view";
 import { boardLinkFor } from "@/lib/item-detail/board-link";
@@ -209,18 +210,18 @@ function ownership(holders: readonly DetailAssignment[], previous: readonly Deta
         <ul className={styles.holders}>
           {holders.map((holder) => (
             <li key={holder.id} className={styles.holder} data-holder-id={holder.holderId}>
-              {liveness(holder.liveness, holder.displayName)}
+              {liveness(holder.liveness, holderLabel(holder))}
               {/* A link back to the board filtered to this holder as
                   assignee (M10 T10) — "who else is this person on right
                   now" becomes one click. Uses `holderId`, not
-                  `displayName`: `assignee` matches a live assignment's
+                  `displayName` (which is also not what is shown): `assignee` matches a live assignment's
                   `holderId` exactly (see `boardLinkFor`'s header), and a
                   person's display name can differ from their id. */}
               <ChipLink
                 href={boardLinkFor("assignee", holder.holderId)}
-                label={`Filter the board by assignee: ${holder.displayName}`}
+                label={`Filter the board by assignee: ${holderLabel(holder)}`}
               >
-                <span className={styles.holderName}>{holder.displayName}</span>
+                <span className={styles.holderName}>{holderLabel(holder)}</span>
               </ChipLink>
               <span className={styles.role}>{roleLabel(holder)}</span>
               <span>since {holder.claimedAt}</span>
@@ -236,7 +237,7 @@ function ownership(holders: readonly DetailAssignment[], previous: readonly Deta
           <ul className={styles.previousList}>
             {previous.map((holder) => (
               <li key={holder.id} data-previous-holder-id={holder.holderId}>
-                <span className={styles.holderName}>{holder.displayName}</span>{" "}
+                <span className={styles.holderName}>{holderLabel(holder)}</span>{" "}
                 <span className={styles.role}>{roleLabel(holder)}</span>{" "}
                 {/* The release time is the point of this list. "Who had it
                     before" without "and when did they let go" cannot tell a

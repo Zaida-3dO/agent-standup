@@ -29,10 +29,11 @@
 // `repair.historicalVerificationAvailable`, and this panel renders the
 // limit sentence from `repairOfferFor` **above the controls, always, before
 // the user can act** — not in a tooltip, not after the call, not in smaller
-// type than the description. When a repair dead-ends for already-finished
-// work the panel takes a heavier treatment (`repairDeadEnd`), because
-// "needs attention" and "this route ends in a refusal you cannot clear"
-// must not look the same.
+// type than the description. The whole panel is collapsed under "Turn this
+// into a task" and styled like the rest of the page: an empty project needs
+// nothing from the person, so this is an option to open, not a fault. When a
+// repair dead-ends for already-finished work only the limit sentence changes
+// (and `data-dead-end` says so); the panel does not turn into a warning.
 //
 // The alternative — offering the buttons and letting the user discover the
 // wall — leaves them having changed live data for nothing and having to
@@ -80,15 +81,17 @@ export function RepairPanel({
   if (!offer.applicable) return null;
 
   return (
-    <section
-      className={`${styles.repair}${offer.deadEndsForFinishedWork ? ` ${styles.repairDeadEnd}` : ""}`}
-      aria-label="Repair this project"
+    <details
+      className={styles.repair}
+      aria-label="Turn this project into a task"
       data-repair-panel="true"
       // Read by the tests. The honest summary of what this panel is
-      // claiming: whether the route it offers ends in a closed item.
+      // claiming: whether the route it offers ends in a closed item. It
+      // changes what the limit sentence says, never how the panel looks:
+      // an empty project needs nothing from the person.
       data-dead-end={offer.deadEndsForFinishedWork ? "true" : "false"}
     >
-      <h2 className={styles.repairTitle}>This project has no work under it</h2>
+      <summary className={styles.repairSummary}>Turn this into a task</summary>
       <p className={styles.repairText}>{offer.achieves}</p>
 
       {/* The limit, rendered BEFORE the controls and never conditionally on
@@ -102,14 +105,12 @@ export function RepairPanel({
 
       <div className={styles.repairForm}>
         <label className={styles.repairField}>
-          <span className={styles.repairLabel}>
-            Retype to a task under this project (an id, or “inbox”)
-          </span>
+          <span className={styles.repairLabel}>Retype to a task under a project (its id)</span>
           <input
             className={styles.repairInput}
             type="text"
             value={projectId}
-            placeholder="inbox"
+            placeholder="a project id"
             onChange={(event) => onProjectIdChange(event.target.value)}
             data-repair-input="projectId"
           />
@@ -168,6 +169,6 @@ export function RepairPanel({
           {outcome.message}
         </p>
       )}
-    </section>
+    </details>
   );
 }

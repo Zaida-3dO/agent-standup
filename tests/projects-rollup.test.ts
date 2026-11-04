@@ -536,4 +536,70 @@ describeIfDb("get_projects rolls up a project's subtree", () => {
       }
     }, 60_000);
   });
+
+  describe("the Inbox is history once nothing in it is open", () => {
+    // The Inbox keeps its finished items as history and takes no new work,
+    // so it drops out of the default list once nothing in it is open.
+    // Matched by the `items.inbox_project` title ("Inbox" by default).
+
+    it("hides an Inbox whose every item is finished", async () => {
+      // Breaks if: the Inbox exemption is removed — the project is listed.
+      const area = "inbox-finished";
+      const inbox = await makeItem({ kind: "project", label: "Inbox", area });
+      await makeItem({ kind: "task", state: "merged", parentId: inbox, label: "old-1", area });
+      await makeItem({ kind: "task", state: "wont_do", parentId: inbox, label: "old-2", area });
+
+      const result = await projects({ area });
+
+      expect(result.projects.map((p) => p.id)).not.toContain(inbox);
+    });
+
+    it("hides an empty Inbox", async () => {
+      // Breaks if: the childless rule ("never hidden") is allowed to win
+      // over the Inbox rule.
+      const area = "inbox-empty";
+      const inbox = await makeItem({ kind: "project", label: "Inbox", area });
+
+      const result = await projects({ area });
+
+      expect(result.projects.map((p) => p.id)).not.toContain(inbox);
+    });
+
+    it("keeps an Inbox that still holds open work", async () => {
+      // The other half: hiding must wait for the open items to be moved, or
+      // they would vanish from view while still needing a home.
+      // Breaks if: the open-work check is dropped and the Inbox is always hidden.
+      const area = "inbox-open";
+      const inbox = await makeItem({ kind: "project", label: "Inbox", area });
+      await makeItem({ kind: "task", state: "merged", parentId: inbox, label: "done", area });
+      await makeItem({ kind: "task", state: "on_deck", parentId: inbox, label: "open", area });
+
+      const result = projectFor(await projects({ area }), inbox);
+
+      expect(result.total).toBe(2);
+    });
+
+    it("brings the finished Inbox back with includeCompleted", async () => {
+      // Breaks if: the exemption ignores `includeCompleted` — the history
+      // could then never be audited.
+      const area = "inbox-history";
+      const inbox = await makeItem({ kind: "project", label: "Inbox", area });
+      await makeItem({ kind: "task", state: "merged", parentId: inbox, label: "done", area });
+
+      const result = await projects({ area, includeCompleted: true });
+
+      expect(result.projects.map((p) => p.id)).toContain(inbox);
+    });
+
+    it("does not hide an ordinary finished-or-empty project that merely resembles it", async () => {
+      // Breaks if: the match widens from the configured title to "any empty
+      // project" — empty projects must still be listed, as Not started.
+      const area = "inbox-lookalike";
+      const empty = await makeItem({ kind: "project", label: "Inbox notes", area });
+
+      const result = projectFor(await projects({ area }), empty);
+
+      expect(result.childless).toBe(true);
+    });
+  });
 });

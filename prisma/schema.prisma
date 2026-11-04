@@ -176,6 +176,9 @@ model Item {
   // deliberately not `linkRefs`, which would suggest they reference a
   // vocabulary table the way `areaLinks` does. They reference nothing.
   links       ItemLink[]
+  // The item's documents: keyed JSON entries agents load on demand and the
+  // board never shows (`ItemDoc`, `ItemDocEntry`).
+  docs        ItemDoc[]
   // `Item_archivedAt_idx` is deliberately absent here and lives only in the
   // migration SQL. It is a PARTIAL index — `WHERE "archivedAt" IS NOT NULL`
   // — which this schema language cannot express, and declaring the full
@@ -296,6 +299,62 @@ model ItemArea {
 
   @@id([itemId, areaId])
   @@index([areaId])
+}
+
+// A named document attached to an item: the header row for a set of keyed
+// entries (`ItemDocEntry`), holding the one thing no entry can — the
+// document's revision.
+//
+// **Why a document is a set of keyed entries and not one JSON value.** The
+// writers are parallel sessions that each own a small part of the whole (one
+// session's section of a progress page, one task's status). With one value
+// per document, every write is read-modify-write of everything, two sessions
+// overwrite each other's parts, and each edit has to carry the whole thing.
+// With one row per key, a write names the keys it changes and nothing else.
+//
+// **Why the revision lives here and not on the entries.** It is a counter
+// for the whole document that only goes up. Derived from the entries
+// (`max(rev)`) it would go backwards when the newest key is deleted, and a
+// caller holding a stale number would then be told nothing had changed. The
+// row is also what a patch locks (`SELECT ... FOR UPDATE`) so two patches to
+// one document are applied one after the other, never interleaved.
+//
+// Created by the first patch that writes it; a document with no entries left
+// is simply not listed anywhere. Cascades with its item.
+model ItemDoc {
+  itemId    String
+  item      Item           @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  // The document's name — short, lowercase, e.g. `progress`.
+  doc       String
+  // How many patches have changed this document. 0 means no patch has.
+  rev       Int            @default(0)
+  updatedAt DateTime       @default(now()) @db.Timestamptz(3)
+  entries   ItemDocEntry[]
+
+  @@id([itemId, doc])
+}
+
+// One keyed entry of a document. `value` is any JSON value.
+//
+// `rev` is the document's revision at the moment this entry was last
+// written, so "what changed since the revision I read" is a comparison on
+// this column. `updatedBy` is the caller's actor, or null for the system.
+//
+// Not a column on `Item`, and deliberately outside every read that returns
+// an item: documents are agent context, so the board, the item card and
+// `get_item` never carry them. They are read by `doc_get` and `doc_list`,
+// both paged under the response-size ceiling.
+model ItemDocEntry {
+  itemId    String
+  doc       String
+  document  ItemDoc  @relation(fields: [itemId, doc], references: [itemId, doc], onDelete: Cascade)
+  key       String
+  value     Json
+  rev       Int
+  updatedAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedBy String?
+
+  @@id([itemId, doc, key])
 }
 
 // An external pointer an item carries — the Slack thread it was discussed
@@ -489,6 +548,11 @@ enum EventType {
   // and archived, one level down.
   open_loop_edited
   open_loop_deleted
+  // One write to an item's documents (`ItemDoc`). The payload names the
+  // document, the new revision and, per key, whether it was created,
+  // updated or deleted and how many bytes it held — never the values, which
+  // are the whole reason a document exists rather than a field on the item.
+  doc_change
 }
 
 model Event {

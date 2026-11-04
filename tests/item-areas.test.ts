@@ -318,6 +318,14 @@ describeIfDb("item areas", () => {
   });
 
   describe("the auto-created inbox project carries its area", () => {
+    // New tasks are refused the Inbox, but an existing item can still be moved
+    // into it with `reparent_item`; that move mints the Inbox through the same
+    // resolver, so it is the way to reach it here.
+    async function intoInbox(title: string, area: string): Promise<{ id: string }> {
+      const stuck = await call("create_project", { ...base(title), area });
+      return (await call("reparent_item", { id: stuck.id, parentId: "inbox" })) as { id: string };
+    }
+
     // The MEDIUM-1 regression, reproduced end to end through the public
     // service API exactly as the review found it: `resolveInboxProject`
     // writes `Item.area` in a raw INSERT and, before the fix, never called
@@ -329,12 +337,8 @@ describeIfDb("item areas", () => {
     // the `COALESCE`/`?? [row.area]` fallbacks make that read correct even
     // when the join table is empty, which is exactly why this survived.
     // The assertion has to go through `list_items`'s actual filter.
-    it("is findable by area filter after create_task(projectId: 'inbox', area: ...)", async () => {
-      const task = await call("create_task", {
-        ...base("Filed to the inbox"),
-        projectId: "inbox",
-        area: "inbox-filter-area",
-      });
+    it("is findable by area filter after reparent_item(parentId: 'inbox') of an item in that area", async () => {
+      const task = await intoInbox("Filed to the inbox", "inbox-filter-area");
 
       const inboxProjectId = await (async () => {
         const rows = await prisma.$queryRawUnsafe<{ parentId: string | null }[]>(
@@ -364,14 +368,13 @@ describeIfDb("item areas", () => {
       // `resolveInboxProject`'s own header on the find-or-create race), so
       // by the time this test runs another test in this suite has already
       // minted it. That is exactly the case this test wants: call
-      // `create_task(projectId: "inbox")` again, with a DIFFERENT area, and
+      // `reparent_item(parentId: "inbox")` again, with a DIFFERENT area, and
       // confirm the inbox project's own area link is untouched — the write
       // only happens on the branch that actually inserts the project row.
-      const first = await call("create_task", {
-        ...base("Primes the inbox project for this test"),
-        projectId: "inbox",
-        area: "inbox-reuse-priming-area",
-      });
+      const first = await intoInbox(
+        "Primes the inbox project for this test",
+        "inbox-reuse-priming-area",
+      );
       const primedParentId = await (async () => {
         const rows = await prisma.$queryRawUnsafe<{ parentId: string | null }[]>(
           `SELECT "parentId" FROM "Item" WHERE "id" = $1`,
@@ -381,11 +384,10 @@ describeIfDb("item areas", () => {
       })();
       const before = await linkedAreas(primedParentId);
 
-      const second = await call("create_task", {
-        ...base("Reuses the inbox project with a different area"),
-        projectId: "inbox",
-        area: "inbox-reuse-should-not-appear",
-      });
+      const second = await intoInbox(
+        "Reuses the inbox project with a different area",
+        "inbox-reuse-should-not-appear",
+      );
       const secondParentId = await (async () => {
         const rows = await prisma.$queryRawUnsafe<{ parentId: string | null }[]>(
           `SELECT "parentId" FROM "Item" WHERE "id" = $1`,

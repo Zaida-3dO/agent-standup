@@ -794,24 +794,6 @@ describeIfDb("the slim write against Postgres", () => {
       expect(result.depth).toBe(1);
     });
 
-    // `"inbox"` is resolved server-side into a real id, so it is the case
-    // where echoing `parentId` earns its place -- a caller that wrote the
-    // sentinel learns which project it actually landed in.
-    it("reports the resolved parent when the inbox sentinel was used", async () => {
-      const result = (await runtime.call("create_task", {
-        title: "Inbox-bound",
-        body: "b".repeat(20_000),
-        area: "slim-writes",
-        originType: "auto",
-        projectId: "inbox",
-      })) as unknown as Record<string, unknown>;
-      expect(result.parentId).not.toBe("inbox");
-      expect(typeof result.parentId).toBe("string");
-      for (const field of HEAVY_FIELDS) {
-        expect(result).not.toHaveProperty(field);
-      }
-    });
-
     it("restores every heavy field when full is passed", async () => {
       const result = (await runtime.call("create_task", {
         title: "A heavy created task, full",

@@ -264,6 +264,11 @@ const NARROWER_CALL: Readonly<Record<string, string>> = {
   get_item_artifacts:
     "a smaller `limit`, or `full: false` for the slim shape, or `artifactId` to fetch one artifact instead of a page",
   get_item_body: "a smaller `limit`",
+  // A page of entries is bounded by its own character budget, so these are
+  // refused only if an entry could not share a page with its key, which the
+  // write side prevents; the remedy is still the parameter that narrows it.
+  doc_get: "a smaller `limit`, or `keys` naming just the entries needed",
+  doc_list: "a smaller `limit`",
 };
 
 /**

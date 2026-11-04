@@ -332,16 +332,15 @@ describeIfDb("delete_item", () => {
     // inbox would archive silently and later capture would land in a
     // different project from everything already filed.
     it("refuses the project the items.inbox_project setting names", async () => {
-      const task = await call<{ parentId: string }>("create_task", {
-        title: "Captured, so the inbox exists",
+      const inbox = await call<{ id: string }>("create_project", {
+        title: String(defaultSnapshot().values["items.inbox_project"]),
         body: "",
         area: "inbox-archive-ref",
         originType: "auto",
-        projectId: "inbox",
       });
 
       const rejection = await rejectionOf("delete_item", {
-        id: task.parentId,
+        id: inbox.id,
         reason: GOOD_REASON,
       });
       expect(rejection.code).toBe("guard_rejected");
@@ -361,16 +360,15 @@ describeIfDb("delete_item", () => {
     // Fails if the inbox reference is turned into an unconditional refusal
     // instead of an acknowledgeable one.
     it("archives the inbox once the caller acknowledges the setting", async () => {
-      const task = await call<{ parentId: string }>("create_task", {
-        title: "Captured, so the inbox exists",
+      const inbox = await call<{ id: string }>("create_project", {
+        title: String(defaultSnapshot().values["items.inbox_project"]),
         body: "",
         area: "inbox-archive-ack",
         originType: "auto",
-        projectId: "inbox",
       });
 
       const archived = await call<Created>("delete_item", {
-        id: task.parentId,
+        id: inbox.id,
         reason: GOOD_REASON,
         acknowledgeReferences: true,
       });
@@ -1259,6 +1257,8 @@ describeIfDb("delete_item", () => {
         `UPDATE "Item" SET "state" = 'plan_review'::"ItemState" WHERE "id" = $1`,
         task.id,
       );
+      // A document entry on the task, so `doc_list` has a row it could leak.
+      await call("doc_patch", { itemId: task.id, doc: "progress", set: { note: "kept" } });
       await call("delete_item", {
         id: task.id,
         reason: GOOD_REASON,
@@ -1354,6 +1354,12 @@ describeIfDb("delete_item", () => {
         // item too, so an artifact id from elsewhere returns nothing rather
         // than reading across.
         "get_item_artifacts",
+        // Reads one item's document entries **by id**, the same shape and the
+        // same reason as the reads immediately above: it ranges over no set
+        // of items, so there is nothing for an archived row to leak *into*,
+        // and a document on an archived item is part of the record of it.
+        // `doc_list`, which does range over an item's children, is swept.
+        "doc_get",
         // Aggregates intervention firings per catalogue entry. It ranges
         // over `intervention_events` and `intervention_scores` and returns
         // counts keyed by entry id — the same "ranges over no items" reason
@@ -1465,7 +1471,7 @@ describeIfDb("delete_item", () => {
         my_work: { sessionId: "sweep-session" },
         orientation: { itemId: project.id },
         progress_report: { sessionId: "sweep-session", includeCompleted: true },
-        repair_stuck_projects: { projectId: "inbox", area: "archive-sweep", apply: false },
+        repair_stuck_projects: { projectId: project.id, area: "archive-sweep", apply: false },
         get_projects: { area: "archive-sweep", includeCompleted: true },
         // Range over items rather than their own tables, so they are swept
         // rather than exempted. `get_fleet` returns live assignments — the
@@ -1483,6 +1489,10 @@ describeIfDb("delete_item", () => {
         // would be offered as a candidate to dispatch against.
         get_stale_candidates: { area: "archive-sweep", includeUnlanded: true },
         loop_list: { itemId: project.id },
+        // Ranges over a parent's children, so an archived child's documents
+        // must not come back through it. `doc_list` filters on the child's
+        // `archivedAt`, which this sweep's archived task would defeat.
+        doc_list: { parentId: project.id, doc: "progress" },
         list_areas: {},
         list_repos: {},
         list_people: {},
@@ -1551,6 +1561,7 @@ describeIfDb("delete_item", () => {
         "orientation",
         "progress_report",
         "repair_stuck_projects",
+        "doc_list",
       ]) {
         expect(swept, `${name} was not swept`).toContain(name);
       }

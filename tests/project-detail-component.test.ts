@@ -280,6 +280,34 @@ describe("RepairPanel — never offer a repair without its limit", () => {
     expect((panel.props as Record<string, unknown>)["data-dead-end"]).toBe("true");
   });
 
+  it("is collapsed under 'Turn this into a task', with no warning title or styling", () => {
+    for (const historicalVerificationAvailable of [false, true]) {
+      const tree = RepairPanel({
+        repair: { childless: true, historicalVerificationAvailable },
+        projectId: "",
+        onProjectIdChange: () => {},
+        parentId: "",
+        onParentIdChange: () => {},
+        onRetype: () => {},
+        onReparent: () => {},
+      });
+      const root = tree as unknown as { type: string; props: Record<string, unknown> };
+      // A <details> with no `open` prop is collapsed.
+      expect(root.type).toBe("details");
+      expect(root.props.open).toBeUndefined();
+      const summary = findAllByType(tree as never, "summary");
+      expect(summary).toHaveLength(1);
+      expect(textOf(summary[0] as never)).toBe("Turn this into a task");
+      // No fault wording, and the dead-end case is not styled as a warning.
+      expect(textOf(tree)).not.toContain("This project has no work under it");
+      expect(String(root.props.className)).not.toMatch(/deadend|suspect/i);
+      expect(findAllByType(tree as never, "h2")).toHaveLength(0);
+      // The controls and the limit sentence are still inside it.
+      expect(withAttr(tree, "data-repair-limit")).toHaveLength(1);
+      expect(withAttr(tree, "data-repair-action")).toHaveLength(2);
+    }
+  });
+
   it("puts the limit BEFORE the controls, so it cannot be acted on unread", () => {
     const tree = RepairPanel({
       repair: { childless: true, historicalVerificationAvailable: false },
@@ -444,7 +472,7 @@ describe("ProjectDetailView", () => {
     expect(textOf(tree)).not.toContain("Blocked");
   });
 
-  it("flags a childless nested project in the children list", () => {
+  it("says an empty nested project is not started, without a warning flag or style", () => {
     const tree = ProjectDetailView({
       ...baseProps,
       loadState: {
@@ -459,9 +487,13 @@ describe("ProjectDetailView", () => {
     });
     const row = withAttr(tree, "data-childless")[0]!;
     expect((row.props as Record<string, unknown>)["data-childless"]).toBe("true");
-    // A visible flag, not merely an attribute — the grid's own requirement,
-    // applied to the same condition one level down.
-    expect(textOf(tree)).toContain("No work under it");
+    // Quiet words, not a flag: an empty project needs nothing from a person.
+    expect(textOf(tree)).toContain("Not started");
+    expect(textOf(tree)).not.toContain("No work under it");
+    expect(withAttr(tree, "data-suspect-reason")).toHaveLength(0);
+    // And no warning styling on the row.
+    const className = String((row.props as Record<string, unknown>).className);
+    expect(className).not.toMatch(/suspect/i);
   });
 
   it("says why an empty project is empty rather than reading as an ordinary blank list", () => {
@@ -471,7 +503,8 @@ describe("ProjectDetailView", () => {
     });
     const empty = withAttr(tree, "data-empty-reason")[0]!;
     expect((empty.props as Record<string, unknown>)["data-empty-reason"]).toBe("no-children");
-    expect(textOf(tree)).toContain("derives from its children");
+    expect(textOf(tree)).toContain("Not started");
+    expect(textOf(tree)).not.toMatch(/nothing here to transition|stuck|fault/i);
   });
 
   it("hands the repair panel this project's own repair advice, unaltered", () => {

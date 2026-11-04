@@ -24,6 +24,7 @@ import { recordFieldChanges } from "@/lib/events";
 import { evaluateNotifications, snapshotOf, type NotificationOutcome } from "../notify-on-change";
 import { normalizeEmDashNoting } from "@/lib/text-normalize";
 import { titleAdviceFor } from "@/lib/item-title";
+import { fieldAdviceFor, FIELD_CONVENTION_RULE } from "@/lib/item-field-advice";
 import { resolveItemId } from "../items/resolve-id";
 
 const inputSchema = z
@@ -125,6 +126,12 @@ export type UpdateItemInput = z.infer<typeof inputSchema>;
 export type UpdateItemResult = (ItemRecord | ItemWriteRecord) & {
   readonly notifications?: NotificationOutcome;
   readonly titleAdvice?: string;
+  /**
+   * A note on the headline and body this edit wrote (and on a headline that
+   * now repeats the title). Same rule as `titleAdvice`: absent unless there
+   * is something to say about THIS call.
+   */
+  readonly fieldAdvice?: string;
 };
 
 const MERGE_AUTHORITY_TO_DB: Record<
@@ -165,7 +172,8 @@ const EDITABLE_FIELDS = [
 export const updateItem = defineOperation({
   name: "update_item",
   kind: "write",
-  summary: "Edits an item's non-state fields.",
+  summary:
+    "Edits an item's non-state fields. Titles are short names (a few words) and the headline is one plain sentence that says something the title does not; no dates, ids, quotes, approvals, codenames, branch names or versions in either. Anything big or technical goes in a document, not the title, headline or body.",
   contract: {
     rules: [
       {
@@ -189,6 +197,7 @@ export const updateItem = defineOperation({
           "it back to unwritten. The cap is enforced but not visible in the schema (a bare capped " +
           "string), so this is the only place it is stated before you are refused for it.",
       },
+      { fields: ["title", "headline", "body"], rule: FIELD_CONVENTION_RULE },
     ],
   },
   // Stryker restore all
@@ -381,8 +390,31 @@ export const updateItem = defineOperation({
       edits.title === undefined
         ? undefined
         : (titleAdviceFor(edits.title, "title", titleWasRewritten) ?? undefined);
+    // Only the fields this call wrote are examined, so an edit to one field is
+    // never answered with a note about another it left alone. The headline is
+    // compared with the title whenever either of them changed, because a title
+    // edit can make a stored headline a copy of it.
+    const fieldAdvice =
+      fieldAdviceFor({
+        ...(edits.headline === undefined ? {} : { headline: edits.headline }),
+        ...(edits.body === undefined ? {} : { body: edits.body }),
+        ...(edits.title !== undefined || edits.headline !== undefined
+          ? {
+              repeatCheck: {
+                title: edits.title ?? current.title,
+                headline: edits.headline !== undefined ? edits.headline : current.headline,
+              },
+            }
+          : {}),
+      }) ?? undefined;
     const withTitleAdvice = (record: ItemRecord | ItemWriteRecord): UpdateItemResult =>
-      titleAdvice === undefined ? record : { ...record, titleAdvice };
+      titleAdvice === undefined && fieldAdvice === undefined
+        ? record
+        : {
+            ...record,
+            ...(titleAdvice === undefined ? {} : { titleAdvice }),
+            ...(fieldAdvice === undefined ? {} : { fieldAdvice }),
+          };
 
     if (setClauses.length === 0) {
       if (!areasChanged && !linksChanged) {

@@ -484,21 +484,96 @@ describeIfDb("the folded loop and create_work tools, against Postgres", () => {
       expect(byId.get(subtask.id)!.parentId).toBe(task.id);
     });
 
-    it('accepts the literal "inbox" as a task\'s projectId', async () => {
-      const task = await call<{ id: string }>("create_work", {
-        type: "task",
-        title: "A task filed in the inbox",
+    // The Inbox takes no new work. Breaks if: the refusal is removed
+    // and the shortcut resolves again -- a task and an Inbox project appear.
+    it("refuses the inbox shortcut as a task's projectId, naming project list", async () => {
+      const error = await rejection(
+        call("create_work", {
+          type: "task",
+          title: "A task aimed at the inbox",
+          body: "b",
+          area: "web",
+          originType: "auto",
+          projectId: "inbox",
+        }),
+      );
+      expect(error.code).toBe("invalid_input");
+      expect(error.fields).toEqual(["projectId"]);
+      expect(error.message).toContain("project list");
+      expect(error.message).toContain("nothing was created");
+      // Nothing was written -- not the task, and not an Inbox project minted
+      // on the way.
+      expect(await prisma.item.count()).toBe(0);
+    });
+
+    // The id of the Inbox is as much "the Inbox" as the shortcut is. The
+    // project is seeded directly: a live root titled with the setting's value.
+    // Breaks if: the id lookup is dropped and only the literal is refused.
+    it("refuses the id of the Inbox project, the same way", async () => {
+      const inbox = await call<{ id: string }>("create_project", {
+        title: String(defaultSnapshot().values["items.inbox_project"]),
         body: "b",
         area: "web",
         originType: "auto",
-        projectId: "inbox",
+      });
+      const inboxId = inbox.id;
+      const before = await prisma.item.count();
+
+      const error = await rejection(
+        call("create_work", {
+          type: "task",
+          title: "Another task for the same place",
+          body: "b",
+          area: "web",
+          originType: "auto",
+          projectId: inboxId,
+        }),
+      );
+      expect(error.code).toBe("invalid_input");
+      expect(error.message).toContain("project list");
+      expect(await prisma.item.count()).toBe(before);
+    });
+
+    // Not an over-reach: a project that is not the Inbox still takes tasks,
+    // including one whose title merely contains the word. Breaks if: the
+    // check matches on a substring or refuses every project id.
+    it("still files a task under a project that is not the Inbox", async () => {
+      const project = await call<{ id: string }>("create_work", {
+        type: "project",
+        title: "Inbox zero for support",
+        body: "b",
+        area: "web",
+        originType: "auto",
+      });
+      const task = await call<{ id: string }>("create_work", {
+        type: "task",
+        title: "Answer the oldest tickets first",
+        body: "b",
+        area: "web",
+        originType: "auto",
+        projectId: project.id,
       });
       const row = await prisma.item.findUnique({
         where: { id: task.id },
-        select: { kind: true, parentId: true },
+        select: { parentId: true },
       });
-      expect(row!.kind).toBe("task");
-      expect(row!.parentId).not.toBeNull();
+      expect(row!.parentId).toBe(project.id);
+    });
+
+    // An unknown id is not the Inbox: it falls through to the ordinary
+    // answer rather than a misleading one about the Inbox.
+    it("leaves an unknown project id to the ordinary not-found answer", async () => {
+      const error = await rejection(
+        call("create_work", {
+          type: "task",
+          title: "A task for a project that is gone",
+          body: "b",
+          area: "web",
+          originType: "auto",
+          projectId: "no-such-project",
+        }),
+      );
+      expect(error.code).toBe("not_found");
     });
   });
 
@@ -520,7 +595,9 @@ describeIfDb("the folded loop and create_work tools, against Postgres", () => {
       expect(error.message).toContain("`projectId`");
       // Says what was wrong, that nothing was created, and what to pass.
       expect(error.message).toContain("Nothing was created");
-      expect(error.message).toContain("inbox");
+      // Points at the way to find a project, not at the Inbox shortcut.
+      expect(error.message).toContain("project list");
+      expect(error.message).not.toContain("inbox");
       // And it must NOT have quietly created a project instead.
       expect(await prisma.item.count()).toBe(0);
     });

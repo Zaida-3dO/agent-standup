@@ -37,9 +37,9 @@
 // `projectId` is required. There is no heuristic that guesses a project from
 // an item's area, title or history: a wrong guess files real work under a
 // project it does not belong to, which is harder to notice and harder to undo
-// than the stuck row it replaced. `"inbox"` is available and is the honest
-// default for a caller that does not know — it says "these need triage",
-// which is true, rather than asserting a relationship that is not.
+// than the stuck row it is. The Inbox is not an option: it takes no new
+// work, so a caller that does not know where an item belongs names a real
+// project, or leaves the item where it is.
 //
 // ── Dry run is the default ──────────────────────────────────────────────
 //
@@ -59,9 +59,8 @@ import {
   resolveParent,
   subtreeOf,
 } from "../items/reparent-core";
-import { resolveInboxProject } from "../items/inbox-project";
 import { NOT_ARCHIVED_CONDITION } from "../items/row";
-import { INBOX_PROJECT_ID } from "./create-task";
+import { assertNotInboxProject } from "./create-task";
 
 /**
  * The states that mean the work is over, one way or another — the same four
@@ -74,11 +73,16 @@ import { INBOX_PROJECT_ID } from "./create-task";
  */
 const TERMINAL_STATES: readonly string[] = ["merged", "research_done", "wont_do", "cancelled"];
 
+/** What a caller is told when the repair is aimed at the Inbox. */
+const INBOX_REPAIR_REFUSAL_MESSAGE =
+  "The Inbox does not take new work, so nothing was moved. Name the project these items belong under: " +
+  "run `project list` to see the projects, then resend with `projectId` set to that project's id.";
+
 const inputSchema = z
   .object({
     /**
-     * The project every repaired item is filed under — an item id, or the
-     * literal `"inbox"`. Required even for a dry run, so the report says
+     * The project every repaired item is filed under — an item id, never the
+     * Inbox. Required even for a dry run, so the report says
      * where the items would actually go rather than describing a move whose
      * destination is still unknown.
      */
@@ -128,39 +132,30 @@ export const repairStuckProjects = defineOperation({
   name: "repair_stuck_projects",
   kind: "write",
   summary:
-    'Finds parentless, childless, non-terminal items — which can neither be transitioned (a project has no state of its own) nor resolved by a child completing — and files each under a project so it becomes a transitionable task. Reports without writing unless apply is true. Idempotent: a repaired item has a parent, so it falls outside the scan. Pass projectId as a project id or the literal "inbox"; no parent is ever guessed.',
+    "Finds parentless, childless, non-terminal items — which can neither be transitioned (a project has no state of its own) nor resolved by a child completing — and files each under a project so it becomes a transitionable task. Reports without writing unless apply is true. Idempotent: a repaired item has a parent, so it falls outside the scan. Pass projectId as a real project id; the Inbox takes no new work and is refused, and no parent is ever guessed.",
   // Stryker restore all
   input: inputSchema,
   contract: {
     rules: [
       {
         fields: ["projectId"],
-        rule: 'A parent is never inferred. projectId is required, and the literal "inbox" is the honest choice when the right project is not known — it says the items need triage rather than asserting a relationship.',
+        rule: 'A parent is never inferred. projectId is required and must be a real project: the Inbox takes no new work, so the literal "inbox" and the id of the Inbox project are refused. When the right project is not known, leave the items where they are.',
       },
       {
         fields: ["apply"],
         rule: "Defaults to false. A call that omits it reports what would change and writes nothing.",
       },
     ],
-    // Not the literal "inbox" in the worked example — see create_task's
-    // identical note. The rule above still documents "inbox" as the honest
-    // choice when the destination is genuinely unknown; this example shows
-    // the more common call, where the caller has a real destination.
     example: { projectId: "<a project id from a project listing>", apply: false },
   },
   async handler(
     ctx: ServiceContext,
     input: RepairStuckProjectsInput,
   ): Promise<RepairStuckProjectsResult> {
-    // Resolved before the scan so a dry run reports the real destination,
-    // and so `"inbox"` names the same project the applied run would use.
-    const projectId =
-      input.projectId === INBOX_PROJECT_ID
-        ? await resolveInboxProject(ctx, {
-            area: input.area ?? "inbox",
-            originType: "auto",
-          })
-        : input.projectId;
+    // Refused before the scan, so a dry run cannot report a move into the
+    // Inbox that an applied run would then be asked to make.
+    await assertNotInboxProject(ctx, input.projectId, INBOX_REPAIR_REFUSAL_MESSAGE);
+    const projectId = input.projectId;
 
     // The whole definition of "stuck", as one predicate: parentless, no
     // child of any kind, and not already resolved. `NOT EXISTS` rather than

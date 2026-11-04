@@ -393,7 +393,7 @@ dumped whole.
 | `assignment_id` | `uuid` null → `assignments.id` | Set on `checkpoint` and other per-agent events. |
 | `body` | `text` null | Prose for `checkpoint`, `note`, `nudge`, `escalation`. **A column, not payload** — slice reads on the hottest path would otherwise drag text nobody asked for, and it's cheap to exclude here. |
 | `headline` | `text` null | **The one-line BLUF beside `body`** — what changed, in one line. Set on a `checkpoint`, whose prose is free text with no structure, so *"where is this up to?"* would otherwise mean reading every checkpoint on the item in full: the most-asked question of in-flight work, and the most expensive to answer. A column, not a payload key, for the same reason `body` is one, and the sharper case of it — the whole point of a headline is being readable *without* the prose, which a key on the same jsonb document cannot be. Optional: a checkpoint that records only prose is still a checkpoint, and making the cheapest durable-progress signal in the system more expensive to write is the wrong direction. Capped at 200 characters in the service layer, because a one-line BLUF that may be a paragraph is not one. Reads fall back to the prose's first line when it is null, so a checkpoint written without one is still answerable. |
-| `type` | enum | `field-change` · `state-change` · `claim` · `release` · `takeover` · `review-requested` · `review` · `merge` · `dispatch` · `dispatch-claimed` · `checkpoint` · `nudge` · `escalation` · `note` · `setting-change`. An enum, not text — a typo would silently create a phantom event class that every count then misses. `note` is the escape hatch, so no `custom` is needed. **Postgres can't remove an enum value**, so add one only when the code that emits it exists. That rule is enforced by `npm run check:event-emitters`, which fails on a declared value nothing writes; a value legitimately reserved ahead of its writer goes in that script's `KNOWN_UNEMITTED` with the milestone row that closes it. The check counts *write sites*, not reachable ones — a read path naming a type does not satisfy it, and neither does a writer nothing calls. `setting-change` is its own value rather than a reuse of `field-change`, which carries `{field, from, to}` about an *item* and has consumers that assume one; its payload is below, its posture is §17.8, and it is written by §19's `PATCH /settings`. |
+| `type` | enum | `field-change` · `state-change` · `claim` · `release` · `takeover` · `review-requested` · `review` · `merge` · `dispatch` · `dispatch-claimed` · `checkpoint` · `nudge` · `escalation` · `note` · `setting-change` · `doc-change`. An enum, not text — a typo would silently create a phantom event class that every count then misses. `note` is the escape hatch, so no `custom` is needed. **Postgres can't remove an enum value**, so add one only when the code that emits it exists. That rule is enforced by `npm run check:event-emitters`, which fails on a declared value nothing writes; a value legitimately reserved ahead of its writer goes in that script's `KNOWN_UNEMITTED` with the milestone row that closes it. The check counts *write sites*, not reachable ones — a read path naming a type does not satisfy it, and neither does a writer nothing calls. `setting-change` is its own value rather than a reuse of `field-change`, which carries `{field, from, to}` about an *item* and has consumers that assume one; its payload is below, its posture is §17.8, and it is written by §19's `PATCH /settings`. |
 | `payload` | `jsonb` | Type-specific. **A discriminated union keyed on `type`** — see below. |
 
 *(No `state_at` here — it's derivable from the `state-change` rows in this same table, event volume is
@@ -422,6 +422,7 @@ turn `GET /events?since=` into a twelve-way union, killing the query the ledger 
 | `escalation` | `{to_person}` — reason in `body` |
 | `note` | *(none — text in `body`)* |
 | `setting-change` | `{key, from: {set, value?}, to: {set, value?}, batch_id}` — `item_id` is null |
+| `doc-change` | `{doc, rev, previousRev, keys: [{key, op, bytes}], keysOmitted?}` — `op` is `created`, `updated` or `deleted`; sizes, **never values**; at most 25 keys, each name cut to 100 characters, with the count of the rest in `keysOmitted` (§8c) |
 
 **`setting-change` carries `{set}` rather than a bare `from`/`to` because JSON `null` is a legal
 setting value** (§17.2): notifications off, retention forever. Without the discriminator, *"cleared
@@ -1060,6 +1061,55 @@ Seeded with two rows. Nothing in the schema is capped at two.
 Since-your-last-visit is `events LEFT JOIN event_seen` for the current profile. Unseen for one profile and
 seen for another is a normal, expected state.
 
+---
+
+## 8c. Documents — keyed entries agents load on demand
+
+The board is for people: a title, one plain sentence, the next step. Anything big, technical or
+agent-only — a plan, a log, a progress page — does not belong in the title, headline, body or
+`customFields`; it goes in a **document** attached to the item. A document is a set of keyed JSON
+entries that agents read when they need them. Nothing that returns an item returns its documents:
+the board, the item card and `get_item` never carry one, and `get_item_detail` carries only a count
+and a size per document (`documents: [{doc, entries, bytes}]`), which the item page renders as one
+plain line each — `notes: 12 entries, 9 KB`.
+
+Two tables, additive, both cascading with their item:
+
+| Table | Field | Type | Meaning |
+|---|---|---|---|
+| `ItemDoc` | `itemId`, `doc` | `text`, `text` | Composite PK. The document: `doc` is a short lowercase name (`^[a-z][a-z0-9_-]{0,47}$`). Created by the first patch that writes it. |
+| | `rev` | `int` | How many changing patches the document has had; 0 until the first. **Only ever goes up** — it is not derived from the entries, because deleting the newest key would lower it. The row is what a patch locks, so two patches to one document run one after the other. |
+| | `updatedAt` | `timestamptz` | |
+| `ItemDocEntry` | `itemId`, `doc`, `key` | `text` ×3 | Composite PK, and a foreign key to `ItemDoc`. `key` is one token of up to 200 characters: letters, digits and `_ . : @ + / -`, starting with a letter or digit. |
+| | `value` | `jsonb` | Any JSON value, `null` included, up to **40,000 serialised characters** so that one entry always fits on one page. A larger value is refused with the instruction to split it across keys. |
+| | `rev` | `int` | The document's revision when this entry was last written. |
+| | `updatedAt`, `updatedBy` | `timestamptz`, `text` null | `updatedBy` is the caller's actor. |
+
+**Why per-key rows.** The writers are parallel sessions that each own a small part of the whole. With
+one value per document every write is a read-modify-write of everything and two sessions overwrite
+each other; with a row per key a write names only the keys it changes.
+
+Operations (registered, and reachable on HTTP; an MCP caller reaches all three through the one `doc` tool, which takes `action: "get" | "list" | "patch"` and dispatches to them, so refusals are the same):
+
+| Operation | Input | Meaning |
+|---|---|---|
+| `doc_patch` | `{itemId, doc, set?: {key: value}, delete?: [key], ifRev?}` | Writes and removes some keys, in one transaction, and leaves every other key alone. At least one key, at most 100 between `set` and `delete`, none in both. Appends **one `doc-change` event** naming the keys, their sizes and the new revision. A patch that changes nothing (every value already stored, every deleted key absent) writes no row, bumps no revision and appends no event, and says `changed: false`. `ifRev` means "the document revision I read at" and is checked **per key**: the patch is refused as a `conflict` if any key it names in `set` or `delete` holds an entry written after that revision (`details` carries `{currentRev, ifRev, keys}` with the clashing keys), or if `ifRev` is ahead of the document. Writes to other keys never clash, so parallel sessions that each own a key can all pass `ifRev`. **Known limit:** a key someone else *deleted* after that revision is not detected, because no tombstone is kept. Omit `ifRev` to write without checking. |
+| `doc_get` | `{itemId, doc, keys? \| prefix?, cursor?, limit?}` | Reads entries in byte order of key: the named `keys`, the keys under a literal `prefix`, or all. Returns the document's `rev` (0 if never written — not an error), `missing` (requested keys that hold nothing) and `nextCursor`. |
+| `doc_list` | `{parentId, doc, cursor?, limit?}` | One document across the **direct, non-archived children** of `parentId`: every entry, ordered by child then key, each tagged with its `itemId`. |
+
+**Paging is by size as well as count.** A page ends at `limit` entries (default 100, at most 200) or at
+50,000 characters of serialised entries, whichever comes first — a quarter of the response ceiling
+(§19), because an MCP result carries the payload twice. A page cut by size is shorter than `limit` and
+still has more; `nextCursor` is the only thing that says whether to call again. The cursor is the
+last key (`doc_get`) or `<itemId>|<key>` (`doc_list`), keyset in byte order, so a walk visits each
+entry exactly once.
+
+HTTP: `GET` and `PATCH /items/{id}/docs/{doc}` and `GET /items/{id}/docs/{doc}/children`.
+
+**The event never carries a value.** The ledger is read in slices by every "what happened" view; a
+value in it would put the document back into each of them. `doc-change` carries sizes and the revision
+only, and a test pins that no value reaches any event of the item.
+
 ## 9. `agents` — registry and names
 
 | Field | Type | Meaning |
@@ -1697,6 +1747,7 @@ Deliberately small. MCP servers exposing sixty-odd tools are easy to find, and e
 | `complete` | Finish an item. **Separate from `transition` on purpose** — the required summary shape is in this tool's schema, where the agent can see it. |
 | `checkpoint` | Record what you tried, what you ruled out, what's next. |
 | `note` | Leave a timestamped remark on an item. |
+| `doc` | **Documents (§8c).** One tool, `action: "get" \| "list" \| "patch"` (over the operations `doc_get`, `doc_list`, `doc_patch`). Where anything big, technical or agent-only goes, instead of the title, headline, body or `customFields`: write some keys of a named document, read keys or a prefix of it, or read it across an item's children. Paged under the response limit; `ifRev` refuses a write to a key someone else has written since you read. |
 | `claim` | Take ownership of an item in a role. Atomic — two agents can't both win. Returns `crew_name` — the name the claiming session is now known by, assigned automatically (§9, §21). |
 | `release` | Give up ownership. |
 | `heartbeat` | Still alive. Unnecessary if your hook is flushing tool calls — that stamps it. Call it if you run no hook. |
@@ -1823,6 +1874,8 @@ over.
 | Endpoint | Purpose |
 |---|---|
 | `POST /items/{id}/transition?dry_run=` | The validated move. |
+| `GET`/`PATCH /items/{id}/docs/{doc}` | Read keys (`?keys=`, `?prefix=`, `?cursor=`, `?limit=`) or write some (`{set, delete, ifRev}`) of one of the item's documents (§8c). |
+| `GET /items/{id}/docs/{doc}/children` | One document across the item's direct children, paged (§8c). |
 | `GET /items/{id}/orientation` | The resume payload. |
 | `GET /crew/wait?since=&timeout=` | **Long-poll.** Returns on the first crew event after `since` that is below the transaction-visibility horizon, or empty at the timeout. `since` is required and is handed back by `claim`, `orientation` and every wait, so a caller always has one. The horizon, not the cursor alone, is what makes this and the polling implementation return identically — a sequence identifier is allocated before commit, so ordering by it alone can step over an event that commits late (§3). `timeout` is clamped to `crew.wait_timeout_seconds`. |
 
@@ -1851,7 +1904,7 @@ usable, and belongs with MILESTONES.md #48.
 |---|---|
 | `GET /board?priority=&area=&repo=&kind=&state=&assignee=&search=&includeTerminal=` | Items grouped by derived column. Filters compose (AND); `state` excludes projects (§1: their stored state is a creation leftover, never a fact about them); `assignee` matches a live assignment's holder; `search` is a case-insensitive substring match over title/body. **Finished work is excluded by default** — `includeTerminal` asks for it, and filtering on a terminal `state` directly still returns it. |
 | `GET /search?q=&state=&area=&repo=&openOnly=&limit=` | Find items by text in `title`, `headline` or `body`, best match first. A case-insensitive **literal** substring match (a caller's `%`/`_` are escaped), ranked title > headline > body with bonuses for an exact field and a word-start match. **Every state is searched by default, finished work included** — the inverse of the list reads, because a caller naming a phrase wants that item whatever state it reached; `openOnly` excludes terminal work. Returns `{id, title, state, headline, matchedIn, score, excerpt}` per match plus `considered`, `truncated` and a `notice`; never a whole record — read one with `GET /items/{id}`. |
-| `GET /events?since=` | Since-your-last-visit. A **slice**, never the whole ledger. |
+| `GET /events?since=` | Since-your-last-visit. A **slice**, never the whole ledger. Slim by default; `full` adds each event's payload and body, and `types` (repeatable) limits the read to those event types. |
 | `POST /events/{id}/seen` | Mark read. Optionally carries facet scores. |
 | `GET /items/{id}` | Read one item for the UI. |
 | `PATCH /items/{id}` | Edit non-state fields. |

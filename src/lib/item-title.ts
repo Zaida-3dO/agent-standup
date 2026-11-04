@@ -39,6 +39,8 @@
 // `ALL_CAPS_PREFIXES` beat the blanket regex it replaced: a broad pattern
 // fires on legitimate prose, and a caller cannot tell why.
 
+import { findPlainTextFindings } from "@/lib/plain-text-rules";
+
 /**
  * A single thing about a title that will read badly on a board.
  *
@@ -210,6 +212,53 @@ function wordCount(value: string): number {
 }
 
 /**
+ * The identifier-shaped findings — a bare reference, a code identifier, a file
+ * path — for any field a person reads, not only a title.
+ *
+ * Split out of `findTitleFindings` so a headline is held to the same shapes
+ * with the same regexes. The wording for `field === "title"` is unchanged;
+ * any other field is told to keep the detail in a note or a document, since
+ * there is no "body" sentence to send a headline to.
+ *
+ * `scanned` must already be bounded by the caller (`TITLE_SCAN_MAX_CHARS`).
+ */
+export function findShapeFindings(scanned: string, field: string): TitleFinding[] {
+  const findings: TitleFinding[] = [];
+  const isTitle = field === "title";
+  const subject = isTitle ? "The title" : `The ${field}`;
+  const whereTo = isTitle ? "in the body" : "in a note or a document";
+
+  if (CROSS_REFERENCE.test(scanned)) {
+    findings.push({
+      field,
+      rule: "cross_reference",
+      message: isTitle
+        ? "The title carries a bare issue, PR or section number, which means nothing to someone reading the board. Say what the work achieves and keep the reference in the body."
+        : `${subject} carries a bare issue, PR or section number, which means nothing to someone reading the board. Keep the reference ${whereTo}.`,
+    });
+  }
+  if (CODE_IDENTIFIER.test(withoutBrandTokens(scanned))) {
+    findings.push({
+      field,
+      rule: "code_identifier",
+      message: isTitle
+        ? "The title names a code identifier. Titles are read by people deciding whether this work is theirs — describe what changes for them, and put the identifier in the body."
+        : `${subject} names a code identifier. It is read by people deciding whether this work is theirs — describe what changes for them, and keep the identifier ${whereTo}.`,
+    });
+  }
+  if (FILE_PATH.test(scanned)) {
+    findings.push({
+      field,
+      rule: "file_path",
+      message: isTitle
+        ? "The title names a file or path, which says where the change lands rather than what it accomplishes. Move it to the body."
+        : `${subject} names a file or path, which says where the change lands rather than what it accomplishes. Keep it ${whereTo}.`,
+    });
+  }
+  return findings;
+}
+
+/**
  * Every way `title` departs from the convention, or an empty list.
  *
  * Pure and total: no database, no settings, no locale. Returns *all* findings
@@ -218,9 +267,12 @@ function wordCount(value: string): number {
  *
  * An empty list is a real answer ("nothing to say about this title"), not a
  * missing one.
+ *
+ * The plain-text rules (dates, ids, quotes, codenames, branch names, versions,
+ * a long title, a separator) live in `plain-text-rules.ts` and are appended
+ * here, so the dialog's live preview and the service's advice agree.
  */
 export function findTitleFindings(title: string, field = "title"): TitleFinding[] {
-  const findings: TitleFinding[] = [];
   // Bounded before any regex sees it — see `TITLE_SCAN_MAX_CHARS`. The
   // findings below describe `title`, but they are DERIVED from this copy, so
   // a pathological input costs a fixed, small amount of work. `wordCount`
@@ -229,30 +281,7 @@ export function findTitleFindings(title: string, field = "title"): TitleFinding[
   const scanned =
     title.length > TITLE_SCAN_MAX_CHARS ? title.slice(0, TITLE_SCAN_MAX_CHARS) : title;
 
-  if (CROSS_REFERENCE.test(scanned)) {
-    findings.push({
-      field,
-      rule: "cross_reference",
-      message:
-        "The title carries a bare issue, PR or section number, which means nothing to someone reading the board. Say what the work achieves and keep the reference in the body.",
-    });
-  }
-  if (CODE_IDENTIFIER.test(withoutBrandTokens(scanned))) {
-    findings.push({
-      field,
-      rule: "code_identifier",
-      message:
-        "The title names a code identifier. Titles are read by people deciding whether this work is theirs — describe what changes for them, and put the identifier in the body.",
-    });
-  }
-  if (FILE_PATH.test(scanned)) {
-    findings.push({
-      field,
-      rule: "file_path",
-      message:
-        "The title names a file or path, which says where the change lands rather than what it accomplishes. Move it to the body.",
-    });
-  }
+  const findings = findShapeFindings(scanned, field);
   if (wordCount(title) < TITLE_MIN_WORDS) {
     findings.push({
       field,
@@ -260,6 +289,7 @@ export function findTitleFindings(title: string, field = "title"): TitleFinding[
       message: `The title is a single word, which cannot say what the work is. Write at least ${TITLE_MIN_WORDS} words describing the outcome.`,
     });
   }
+  findings.push(...findPlainTextFindings(scanned, field, true));
 
   return findings;
 }
@@ -326,4 +356,4 @@ export function titleAdviceFor(
  * protects by interpolating its caps rather than retyping them.
  */
 export const TITLE_CONVENTION_RULE =
-  "`title` is written for a person scanning a board: say what the work achieves, in words a reader outside this codebase would understand. Identifiers, file paths, and issue or PR numbers belong in `body`. A title that reads as a work order is accepted and answered with a note, never refused — the judgement is the author's.";
+  "`title` is a short name (a few words) written for a person scanning a board: say what the work achieves, in words a reader outside this codebase would understand, with the one-sentence explanation in `headline`. No dates, author tags, ids, quotes, approvals, codenames, branch names or versions. Identifiers, file paths, and issue or PR numbers belong in `body`. A title that reads as a work order is accepted and answered with a note, never refused — the judgement is the author's.";

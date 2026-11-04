@@ -319,3 +319,31 @@
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
+
+/* A project with nothing under it yet. Quiet on purpose: an empty project is
+   a normal state and asks nothing of the reader, so it gets no accent
+   colour, no badge and no action — only the muted text the rest of the page
+   uses for secondary information. */
+.cardQuiet {
+  opacity: 0.85;
+}
+
+.notStarted {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.quietSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+}
+
+.quietHeading {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}

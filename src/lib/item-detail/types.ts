@@ -20,7 +20,9 @@ import type {
   ItemState,
   Liveness,
 } from "@/lib/board/types";
+import type { DetailDocument } from "./documents";
 
+export type { DetailDocument };
 export type { AssignmentRole, BoardColumnId, HolderType, ItemState, Liveness };
 
 /**
@@ -246,4 +248,11 @@ export interface ItemDetail {
    * holder that has let go.
    */
   readonly previousHolders: readonly DetailAssignment[];
+  /**
+   * The documents the item carries — name, entry count and size, never a
+   * value. Optional for the same reason the other widenings on this file's
+   * types are: it mirrors the wire by hand, and a response without the key
+   * renders as one with an empty list.
+   */
+  readonly documents?: readonly DetailDocument[];
 }

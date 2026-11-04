@@ -50,6 +50,21 @@ describeIfDb("progress_report against Postgres", () => {
   });
 
   let seq = 0;
+  let homeProjectId: string | undefined;
+
+  /** The one project every report subject is filed under, made on first use. */
+  async function homeProject(): Promise<string> {
+    if (homeProjectId === undefined) {
+      const project = (await runtime.call("create_project", {
+        title: "Report subjects",
+        body: "x",
+        area: "reporting",
+        originType: "auto",
+      })) as { id: string };
+      homeProjectId = project.id;
+    }
+    return homeProjectId;
+  }
 
   /** An item, claimed by `sessionId`, so it appears in that session's report. */
   async function heldItem(
@@ -62,7 +77,7 @@ describeIfDb("progress_report against Postgres", () => {
       body: "x",
       area: "reporting",
       originType: "auto",
-      projectId: "inbox",
+      projectId: await homeProject(),
       ...overrides,
     })) as { id: string };
 

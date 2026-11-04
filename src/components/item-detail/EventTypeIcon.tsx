@@ -35,6 +35,7 @@ import {
   TriangleAlert,
   SlidersHorizontal,
   MessageSquare,
+  FileStack,
   type LucideIcon,
 } from "lucide-react";
 import type { EventType } from "@/lib/events";
@@ -67,6 +68,10 @@ const ICONS: Record<EventType, LucideIcon> = {
   nudge: Bell,
   escalation: TriangleAlert,
   setting_change: SlidersHorizontal,
+  // A write to one of the item's documents. A file glyph, distinct from the
+  // checkpoint's (`FileText`) by being a stack: documents are agent context,
+  // not a resume point.
+  doc_change: FileStack,
 };
 
 export interface EventTypeIconProps {

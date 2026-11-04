@@ -168,4 +168,5 @@ export const EVENT_TYPE_ORDER: readonly EventType[] = [
   "nudge",
   "escalation",
   "setting_change",
+  "doc_change",
 ];

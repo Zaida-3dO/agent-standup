@@ -286,6 +286,36 @@ const FORWARDED: readonly {
     },
   },
 
+  // ── doc ──────────────────────────────────────────────────────────────
+  //
+  // `get` and `patch` name the item `itemId`; `list` names the parent
+  // `parentId`. Each entry carries every field its action can forward.
+  {
+    operation: "doc_get",
+    input: {
+      itemId: "item-1",
+      doc: "progress",
+      prefix: "session-",
+      cursor: "session-a",
+      limit: 10,
+    },
+  },
+  { operation: "doc_get", input: { itemId: "item-1", doc: "progress", keys: ["a", "b"] } },
+  {
+    operation: "doc_list",
+    input: { parentId: "item-1", doc: "progress", cursor: "child|key", limit: 10 },
+  },
+  {
+    operation: "doc_patch",
+    input: {
+      itemId: "item-1",
+      doc: "progress",
+      set: { a: { n: 1 } },
+      delete: ["b"],
+      ifRev: 3,
+    },
+  },
+
   // ── read_item ────────────────────────────────────────────────────────
   //
   // All three take `id`, never `itemId`, and all three are `.strict()` — so
@@ -413,6 +443,9 @@ describe("every folded field name is one its delegate accepts", () => {
       "create_project",
       "create_task",
       "create_subtask",
+      "doc_get",
+      "doc_list",
+      "doc_patch",
       "loop_add",
       "loop_get",
       "loop_list",
@@ -555,6 +588,40 @@ const OBSERVED: readonly ObservedCase[] = [
     tool: "session",
     input: { action: "shape", sessionId: "sess-1" },
     delegate: "get_session_shape",
+  },
+
+  // ── doc ──────────────────────────────────────────────────────────────
+  //
+  // Every optional field each action can forward is present deliberately, so
+  // the arrival check below sees a dropped one.
+  {
+    tool: "doc",
+    input: {
+      action: "get",
+      itemId: "item-1",
+      doc: "progress",
+      prefix: "session-",
+      cursor: "session-a",
+      limit: 10,
+    },
+    delegate: "doc_get",
+  },
+  {
+    tool: "doc",
+    input: { action: "list", parentId: "item-1", doc: "progress", cursor: "child|key", limit: 10 },
+    delegate: "doc_list",
+  },
+  {
+    tool: "doc",
+    input: {
+      action: "patch",
+      itemId: "item-1",
+      doc: "progress",
+      set: { a: { n: 1 } },
+      delete: ["b"],
+      ifRev: 3,
+    },
+    delegate: "doc_patch",
   },
 
   // ── read_item ────────────────────────────────────────────────────────

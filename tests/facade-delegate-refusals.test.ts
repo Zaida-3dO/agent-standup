@@ -58,6 +58,8 @@ describeIfDb("a facade's delegate schema refuses by name", () => {
   const dbName = scratchDatabaseName("facade_delegate_refusals");
   let prisma: PrismaClient;
   let runtime: ServiceRuntime;
+  /** A real project the tasks under test are filed under (the Inbox takes no new work). */
+  let homeProjectId = "";
 
   beforeAll(async () => {
     const { url } = await createMigratedScratchDatabase(testDatabaseUrl!, dbName);
@@ -66,6 +68,14 @@ describeIfDb("a facade's delegate schema refuses by name", () => {
       transaction: prismaTransactionRunner(prisma),
       resolveSnapshot: async () => defaultSnapshot(),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const home = (await (runtime.call as any)("create_project", {
+      title: "Home for the tasks under test",
+      body: "The brief.",
+      area: "api",
+      originType: "auto",
+    })) as { id: string };
+    homeProjectId = home.id;
   }, 60_000);
 
   afterAll(async () => {
@@ -86,7 +96,7 @@ describeIfDb("a facade's delegate schema refuses by name", () => {
 
   /** A create with neither cross-field rule satisfied yet, so a case adds only what it tests. */
   function work(title: string) {
-    return { type: "task" as const, projectId: "inbox", title, body: "The brief." };
+    return { type: "task" as const, projectId: homeProjectId, title, body: "The brief." };
   }
 
   describe("exactly one of area or areas", () => {

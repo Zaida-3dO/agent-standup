@@ -103,7 +103,7 @@ describe("the standup fetch reads the end of the ledger", () => {
     expect(feedUrls.length).toBeGreaterThanOrEqual(2);
     const heavy = feedUrls.find((u) => u.includes("full=true"));
     expect(heavy, "the full read should exist").toBeDefined();
-    expect(heavy).toContain("since=2179");
+    expect(heavy).toContain("since=194");
   });
 
   it("derives the cursor from newestId and not from the visibility horizon", async () => {
@@ -113,8 +113,11 @@ describe("the standup fetch reads the end of the ledger", () => {
     // come back empty while looking like a quiet night.
     const feedUrls = await capturedFeedUrls(feedBody());
     const heavy = feedUrls.find((u) => u.includes("full=true"))!;
-    expect(heavy).toContain("since=2179");
-    expect(heavy).not.toContain("since=28802");
+    expect(heavy).toContain("since=194");
+    expect(heavy).not.toContain("since=28767");
+    // The slim page reads from the same place.
+    const slim = feedUrls.find((u) => u.includes("types=merge") && !u.includes("full=true"))!;
+    expect(slim).toContain("since=194");
   });
 
   it("omits since rather than paging past the end when the ledger is empty", async () => {
@@ -123,5 +126,7 @@ describe("the standup fetch reads the end of the ledger", () => {
     const feedUrls = await capturedFeedUrls(feedBody({ newestId: null }));
     const heavy = feedUrls.find((u) => u.includes("full=true"))!;
     expect(heavy).not.toContain("since=");
+    const slim = feedUrls.find((u) => u.includes("types=merge") && !u.includes("full=true"))!;
+    expect(slim).not.toContain("since=");
   });
 });
