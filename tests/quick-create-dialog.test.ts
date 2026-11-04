@@ -12,7 +12,13 @@ import { emptyDraft, type QuickCreateDraft } from "@/lib/create/state";
 import { walk, findAllByType } from "./helpers/react-element";
 
 function draft(over: Partial<QuickCreateDraft> = {}): QuickCreateDraft {
-  return { ...emptyDraft("task"), title: "A title of several words", area: "web", ...over };
+  return {
+    ...emptyDraft("task"),
+    title: "A title of several words",
+    area: "web",
+    parent: "project-1",
+    ...over,
+  };
 }
 
 function render(over: Partial<Parameters<typeof QuickCreateDialog>[0]> = {}) {
@@ -225,13 +231,16 @@ describe("validation", () => {
 });
 
 describe("the parent field", () => {
-  it("asks a task for a project, and says the empty case is the inbox", () => {
+  it("asks a task for a project, and makes no offer to file in the inbox", () => {
     const tree = render({ draft: draft({ kind: "task" }) });
     expect(byProp(tree, "id", "quick-create-parent")).toHaveLength(1);
-    expect(textOf(tree)).toContain("filed in the inbox project");
+    expect(textOf(tree)).not.toMatch(/inbox/i);
+    expect(
+      (byProp(tree, "id", "quick-create-parent")[0]!.props as Record<string, unknown>).placeholder,
+    ).toBe("Project id");
   });
 
-  it("asks a subtask for a task, with no inbox promise it cannot keep", () => {
+  it("asks a subtask for a task, with no inbox promise either", () => {
     const tree = render({ draft: draft({ kind: "subtask", parent: "t-1" }) });
     expect(byProp(tree, "id", "quick-create-parent")).toHaveLength(1);
     expect(textOf(tree)).not.toContain("filed in the inbox project");

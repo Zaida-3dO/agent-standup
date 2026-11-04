@@ -18,7 +18,13 @@ import {
 import { UI_API_PREFIX } from "@/lib/ui-proxy/path";
 
 function draft(over: Partial<QuickCreateDraft> = {}): QuickCreateDraft {
-  return { ...emptyDraft("task"), title: "A title of several words", area: "web", ...over };
+  return {
+    ...emptyDraft("task"),
+    title: "A title of several words",
+    area: "web",
+    parent: "project-1",
+    ...over,
+  };
 }
 
 /**
@@ -68,15 +74,20 @@ describe("blockingIssues", () => {
     expect(issues.map((issue) => issue.rule).sort()).toEqual(["area_required", "title_required"]);
   });
 
-  it("does NOT block a task with no project — that is the inbox sentinel", () => {
-    // The distinguishing case for the whole parent rule. A task with an
-    // empty project is a legal, named choice, so blocking it would force a
-    // person to create a project they do not need.
-    expect(blockingIssues(draft({ kind: "task", parent: "" }))).toEqual([]);
-    expect(canSubmit(draft({ kind: "task", parent: "" }))).toBe(true);
+  it("blocks a task with no project: the Inbox takes no new work, so nothing stands in for one", () => {
+    const issues = blockingIssues(draft({ kind: "task", parent: "" }));
+    expect(issues.map((issue) => issue.rule)).toEqual(["parent_required"]);
+    expect(issues[0]!.field).toBe("parent");
+    expect(issues[0]!.message).toContain("project");
+    expect(canSubmit(draft({ kind: "task", parent: "" }))).toBe(false);
+    expect(canSubmit(draft({ kind: "task", parent: "   " }))).toBe(false);
   });
 
-  it("DOES block a subtask with no task, which has no sentinel to fall back to", () => {
+  it("accepts a task once a project is named", () => {
+    expect(blockingIssues(draft({ kind: "task", parent: "project-1" }))).toEqual([]);
+  });
+
+  it("DOES block a subtask with no task, which has nothing to fall back to either", () => {
     const issues = blockingIssues(draft({ kind: "subtask", parent: "" }));
     expect(issues.map((issue) => issue.rule)).toContain("parent_required");
     expect(canSubmit(draft({ kind: "subtask", parent: "" }))).toBe(false);

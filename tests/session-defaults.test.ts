@@ -11,9 +11,7 @@
 // The pure resolution is tested without a database, because its rules are
 // pure and a rule that only ever runs behind a `create_task` is a rule whose
 // edges are hard to reach. The database half then proves the same rules
-// actually apply on the real creation path — including through
-// `resolveInboxProject`, which writes an item of its own before `insertItem`
-// is ever reached and would otherwise inherit nothing.
+// actually apply on the real creation path.
 //
 // Skips the DB half without TEST_DATABASE_URL, like every other DB-backed
 // file here.
@@ -221,29 +219,6 @@ describeIfDb("session-declared defaults on the real creation path", () => {
       expect(item.originPersonId).toBe("person-a");
       expect(item.driveMode).toBe("supervised");
     }
-  });
-
-  // `resolveInboxProject` writes an item *before* `insertItem` runs, so it
-  // resolves the declaration separately. Fails if that second resolution is
-  // removed: the inbox project would be attributed `auto` while the task
-  // filed into it is attributed to a person.
-  it("attributes an auto-minted inbox project the same way as the task filed into it", async () => {
-    await register("session-inbox", { personId: "person-a", driveMode: "supervised" });
-
-    const task = await callAs<Created>("session-inbox", "create_task", {
-      ...base("Quick capture", "inbox-area"),
-      projectId: "inbox",
-    });
-
-    const inboxRows = await prisma.$queryRawUnsafe<
-      { originType: string; originPersonId: string | null }[]
-    >(
-      `SELECT i."originType", i."originPersonId" FROM "Item" i
-       WHERE i."id" = (SELECT "parentId" FROM "Item" WHERE "id" = $1)`,
-      task.id,
-    );
-    expect(inboxRows[0]?.originType).toBe("person");
-    expect(inboxRows[0]?.originPersonId).toBe("person-a");
   });
 
   // The behaviour for everyone who has not declared anything must be exactly

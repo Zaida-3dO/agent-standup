@@ -32,27 +32,28 @@ describe("the three explicit creates are registered operations", () => {
   // The summary is the tool description an agent reads. Fails if a summary
   // stops naming the required parent, which is the single most important
   // thing a caller needs to know before calling it.
-  it("create_task's summary names projectId and the inbox escape hatch", () => {
+  it("create_task's summary names projectId and says the Inbox is refused", () => {
     const summary = OPERATION_REGISTRY.create_task.summary;
     expect(summary).toContain("projectId");
-    expect(summary).toContain("inbox");
+    expect(summary).toContain("The Inbox takes no new work");
+    expect(summary).not.toContain("to file it in");
   });
 
   // `create_work` is the tool MCP actually serves — the three above are
   // waived from both transports and reached over HTTP and the command line
   // — so its summary is the only one most agents ever read. It was the one
   // create summary with no assertion on it at all, which a trim pass found
-  // by mutating the escape hatch out of it and watching every test pass.
+  // by mutating a clause out of it and watching every test pass.
   //
   // Each `toContain` names something a caller cannot learn anywhere else in
-  // the tool list: which pointer each type takes, and that `inbox` is the
-  // way to file a task whose project is not known. Dropping any one of them
+  // the tool list: which pointer each type takes, and that the Inbox
+  // takes no new work. Dropping any one of them
   // is the edit that makes the tool unusable without `describe_tool`.
-  it("create_work's summary names each type's parent and the inbox escape hatch", () => {
+  it("create_work's summary names each type's parent and says the Inbox takes no new work", () => {
     const summary = OPERATION_REGISTRY.create_work.summary;
     expect(summary).toContain("projectId");
     expect(summary).toContain("taskId");
-    expect(summary).toContain("inbox");
+    expect(summary).toContain("Inbox takes no new work");
     expect(summary).toContain("type");
   });
 

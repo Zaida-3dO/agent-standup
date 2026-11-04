@@ -55,7 +55,7 @@ import {
   type CreatedWriteRecord,
 } from "../items/create-core";
 import { createProject } from "./create-project";
-import { createTask, INBOX_PROJECT_ID } from "./create-task";
+import { createTask } from "./create-task";
 import { createSubtask } from "./create-subtask";
 
 /** The three kinds this tool creates. Depth 0, 1 and 2+ respectively. */
@@ -76,8 +76,8 @@ const inputSchema = z
     ...commonCreateShape,
     /**
      * The project a task goes under — required when `type` is `task`, and
-     * refused otherwise. The literal `"inbox"` is accepted and resolves to
-     * the configured inbox project.
+     * refused otherwise. The Inbox takes no new work: `create_task`, which
+     * this delegates to, refuses the literal `"inbox"` and the Inbox's id.
      *
      * Optional *in the schema* and required *by the handler* on purpose. A
      * schema-level requirement cannot be conditional on `type` in a way the
@@ -114,43 +114,6 @@ const REMEDY: Readonly<Record<CreateWorkType, string>> = Object.freeze({
   task: "Resend with `projectId` set to the id of the project this belongs under (list projects with `project list`).",
   subtask: "Resend with `taskId` set to the id of the task this belongs under.",
 });
-
-/**
- * What a caller is told when a task is aimed at the Inbox.
- *
- * Inbox is not a place for work: it keeps its finished items as history and
- * is hidden once nothing in it is open. New work names a real project, so the
- * board never grows a pile of tasks nobody triaged. Worded for the person
- * reading it, and names the one command that fixes the call.
- */
-export const INBOX_REFUSAL_MESSAGE =
-  "The Inbox does not take new work, so nothing was created. Name the project this task belongs under: " +
-  "run `project list` to see the projects, then resend with `projectId` set to that project's id.";
-
-/**
- * Refuses a task whose `projectId` is the `"inbox"` shortcut, or is the id of
- * the project the `items.inbox_project` setting names.
- *
- * Only this operation (the one agents are given) refuses; `create_task` keeps
- * resolving the shortcut for the HTTP and command-line callers that already
- * rely on it. The id check is a read, so an unknown id falls through to the
- * ordinary "no such project" answer from the operation that owns it.
- */
-async function assertNotInbox(ctx: ServiceContext, input: CreateWorkInput): Promise<void> {
-  if (input.type !== "task" || input.projectId === undefined) return;
-  if (input.projectId === INBOX_PROJECT_ID) {
-    throw new InvalidInputError(INBOX_REFUSAL_MESSAGE, { fields: ["projectId"] });
-  }
-  const rows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
-    `SELECT "id" FROM "Item"
-     WHERE "id" = $1 AND "parentId" IS NULL AND "title" = $2 AND "archivedAt" IS NULL`,
-    input.projectId,
-    ctx.settings.values["items.inbox_project"],
-  );
-  if (rows.length > 0) {
-    throw new InvalidInputError(INBOX_REFUSAL_MESSAGE, { fields: ["projectId"] });
-  }
-}
 
 /**
  * Refuses a `type` that does not match the parent fields supplied.
@@ -203,7 +166,7 @@ export const createWork = defineOperation({
   name: "create_work",
   kind: "write",
   summary:
-    'Creates a project, a task or a subtask — say which with type; it is never inferred. A task takes projectId (a real project\'s id; the "inbox" shortcut is refused, so list projects first with project list); a subtask takes taskId; a project takes neither, and a mismatched pair is refused rather than guessed. Tasks and subtasks have their own state and can be transitioned; a project derives its column from its children and cannot. The board is read by people: title is a short name (a few words); headline is one plain sentence that says something the title does not; neither carries dates, ids, quotes, approvals, codenames, branch names or versions. Create a task only for a result a person would recognise or check, and record implementation steps as loops on it, not subtasks. Anything big or technical goes in a document, not the title, headline or body.',
+    "Creates a project, a task or a subtask — say which with type; it is never inferred. A task takes projectId (a real project's id; the Inbox takes no new work, so list projects first with project list); a subtask takes taskId; a project takes neither, and a mismatched pair is refused rather than guessed. Tasks and subtasks have their own state and can be transitioned; a project derives its column from its children and cannot. The board is read by people: title is a short name (a few words); headline is one plain sentence that says something the title does not; neither carries dates, ids, quotes, approvals, codenames, branch names or versions. Create a task only for a result a person would recognise or check, and record implementation steps as loops on it, not subtasks. Anything big or technical goes in a document, not the title, headline or body.",
   contract: {
     rules: [
       {
@@ -220,13 +183,6 @@ export const createWork = defineOperation({
       body: "The reset link expires too fast.",
       area: "web",
       originType: "auto",
-      // Not the literal "inbox" — that resolves and is a legitimate choice,
-      // but a worked example is what a caller without a real project id
-      // copies verbatim, and copying this one is exactly how the catch-all
-      // project ends up holding work that was never triaged there on
-      // purpose. Look up a real project (get_board, list_items) and pass
-      // its id; "inbox" remains available and stays documented in the rule
-      // above — this example simply shows the more common, real call.
       projectId: "<a project id from a project listing>",
     },
   },
@@ -237,10 +193,9 @@ export const createWork = defineOperation({
     input: CreateWorkInput,
   ): Promise<CreatedItem | CreatedWriteRecord> {
     assertTypeMatchesParent(input);
-    await assertNotInbox(ctx, input);
 
     // Dispatch to the operation that already creates this kind, so every
-    // depth check, inbox resolution, short-id resolution and origin rule
+    // depth check, Inbox refusal, short-id resolution and origin rule
     // runs exactly once — in the operation that owns it. `create_task`'s
     // refusal of a non-project parent and `create_subtask`'s refusal of a
     // project parent reach the caller unedited.

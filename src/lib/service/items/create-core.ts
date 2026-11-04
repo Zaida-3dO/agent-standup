@@ -470,23 +470,6 @@ export interface CreatedItem extends ItemRecord {
    * either way.
    */
   readonly fieldAdvice?: string;
-  /**
-   * A note that this create resolved `projectId` to the configured
-   * catch-all (inbox) project — set only by `create_task`, the one caller
-   * that can resolve the sentinel, and carried through by `create_work`'s
-   * delegation.
-   *
-   * Same posture as `titleAdvice`: absent when nothing to say, present only
-   * on the call that actually resolved the sentinel. The literal `"inbox"`
-   * is a real, supported choice (`repair_stuck_projects` names it "the
-   * honest choice when the right project is not known") — this is not a
-   * refusal and does not become one. It exists because the choice has, in
-   * practice, mostly been made by accident: a caller with no real project
-   * id copies the worked example rather than looking one up, and by the
-   * time anyone notices, the catch-all is holding dozens of items that were
-   * never meant to land together.
-   */
-  readonly projectAdvice?: string;
 }
 
 /**
@@ -572,8 +555,6 @@ export interface CreatedWriteRecord extends ItemWriteRecord {
   readonly titleAdvice?: string;
   /** See `CreatedItem.fieldAdvice` — carried through, since it is about this call. */
   readonly fieldAdvice?: string;
-  /** See `CreatedItem.projectAdvice` — carried through, since it is about this call. */
-  readonly projectAdvice?: string;
 }
 
 /**
@@ -604,7 +585,6 @@ export function toCreatedWriteRecord(record: CreatedItem): CreatedWriteRecord {
     // the same posture `insertItem` uses when it attaches the advice.
     ...(record.titleAdvice === undefined ? {} : { titleAdvice: record.titleAdvice }),
     ...(record.fieldAdvice === undefined ? {} : { fieldAdvice: record.fieldAdvice }),
-    ...(record.projectAdvice === undefined ? {} : { projectAdvice: record.projectAdvice }),
   };
 }
 

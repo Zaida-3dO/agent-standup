@@ -8,25 +8,15 @@
 // pointer point at?"). Naming the mechanism is what let a caller ask for a
 // task, omit the pointer, and receive a project.
 //
-// **Required, with one named escape hatch.** Requiring the field is what
-// makes "a task always belongs somewhere" true, and what makes the kind
-// knowable from the call rather than from the database. The cost is quick
-// capture: with nothing but a strict requirement, a thought you want to
-// write down in one call needs a project created first, and its id looked
-// up. `INBOX_PROJECT_ID` is the resolution — the literal `"inbox"`, accepted
-// where a project id goes, resolving to the project named by the
-// `items.inbox_project` setting and creating it on first use.
-//
-// The distinction from an *optional* `projectId` that silently falls back is
-// the whole reason it is a sentinel and not an omission. An omitted field
-// that quietly decides where the work lands is the same defect this
-// operation exists to remove, one level down: the caller would again not be
-// stating what it wants, and would again discover the answer later. Writing
-// `"inbox"` is a caller saying "file this in the inbox" — a decision on the
-// record, visible in the call, and refusable by nothing because it is always
-// resolvable.
+// **The Inbox takes no new work.** It keeps the items already in it as
+// history and is hidden once nothing in it is open; a task filed there is
+// one nobody triaged. So the literal `"inbox"` and the id of the Inbox
+// project are both refused here, before anything is read or written, and
+// every caller inherits that — `create_work` delegates to this handler, and
+// the HTTP route and the command line call it directly. The refusal names
+// the one command that fixes the call (`project list`).
 import { z } from "zod";
-import { NotFoundError } from "../errors";
+import { InvalidInputError, NotFoundError } from "../errors";
 import { defineOperation } from "../operation";
 import type { ServiceContext } from "../context";
 import {
@@ -45,49 +35,61 @@ import {
   type CreatedWriteRecord,
   TITLE_CONVENTION_CONTRACT_RULE,
 } from "../items/create-core";
-import { resolveInboxProject } from "../items/inbox-project";
 
 /**
- * The literal a caller writes in `projectId` to mean "the inbox".
+ * The shortcut literal that names the Inbox where a project id goes.
  *
- * Lowercase and unqualified, because it has to be typeable from a command
- * line without quoting rules. It cannot collide with a real project: ids are
- * generated as UUIDs, and an imported id that happened to be this string
- * would be shadowed — a real, if vanishingly unlikely, cost, stated here
- * rather than discovered. The alternative sentinels considered (a `null`, an
- * empty string, an omitted field) all read as "the caller did not say",
- * which is exactly the state this operation refuses to have.
+ * A named constant because it is the thing that is refused here, and
+ * because the other operations that take a project pointer (`reparent_item`,
+ * `retype_to_task`, `repair_stuck_projects`) compare against it.
  */
 export const INBOX_PROJECT_ID = "inbox";
 
 /**
- * The note attached to a create that resolved `projectId` to the inbox
- * (MILESTONES.md #131's `titleAdvice` mechanism, reused for a different
- * field — see `CreatedItem.projectAdvice`).
+ * What a caller is told when work is aimed at the Inbox.
  *
- * `"inbox"` is a real, supported choice, not a mistake by construction — a
- * caller that types it means "I don't know where this goes yet, file it for
- * triage" and that is exactly what the operation does. What this note
- * answers is the far more common case reported against 0.28.2: a caller
- * with no real project id to hand copied the worked example, which used to
- * show this exact literal, and never intended the catch-all at all. The
- * advisory fires on every resolution regardless of which caller meant it,
- * because the operation cannot tell the two apart — it can only make the
- * choice visible immediately, on the one response a caller reads before it
- * moves on to the next call.
+ * Inbox is not a place for work: it keeps its finished items as history and
+ * is hidden once nothing in it is open. New work names a real project, so the
+ * board never grows a pile of tasks nobody triaged. Worded for the person
+ * reading it, and names the one command that fixes the call.
  */
-export const PROJECT_ADVICE_MESSAGE =
-  `A note on the project: projectId resolved to the configured inbox project (the "${INBOX_PROJECT_ID}" ` +
-  "sentinel), which is a real project like any other and not a temporary holding area — it can " +
-  "accumulate work from every caller that reaches for the sentinel. If this task belongs somewhere " +
-  "more specific, look up the right project (get_board, list_items) and reparent it there.";
+export const INBOX_REFUSAL_MESSAGE =
+  "The Inbox does not take new work, so nothing was created. Name the project this task belongs under: " +
+  "run `project list` to see the projects, then resend with `projectId` set to that project's id.";
+
+/**
+ * Refuses a `projectId` that is the `"inbox"` shortcut, or is the id of the
+ * project the `items.inbox_project` setting names (a root with that title
+ * that is not archived).
+ *
+ * The id check is a read, so an unknown id falls through to the ordinary
+ * "no such project" answer from the caller that owns it.
+ */
+export async function assertNotInboxProject(
+  ctx: ServiceContext,
+  projectId: string,
+  message: string = INBOX_REFUSAL_MESSAGE,
+): Promise<void> {
+  if (projectId === INBOX_PROJECT_ID) {
+    throw new InvalidInputError(message, { fields: ["projectId"] });
+  }
+  const rows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
+    `SELECT "id" FROM "Item"
+     WHERE "id" = $1 AND "parentId" IS NULL AND "title" = $2 AND "archivedAt" IS NULL`,
+    projectId,
+    ctx.settings.values["items.inbox_project"],
+  );
+  if (rows.length > 0) {
+    throw new InvalidInputError(message, { fields: ["projectId"] });
+  }
+}
 
 const inputSchema = z
   .object({
     ...commonCreateShape,
     /**
-     * An existing `items.id` whose kind is `project`, or the literal
-     * `"inbox"`. Required — a task belongs to a project.
+     * An existing `items.id` whose kind is `project`, and not the Inbox.
+     * Required — a task belongs to a project, and the Inbox takes no new work.
      */
     projectId: z.string().trim().min(1, "projectId is required"),
   })
@@ -107,7 +109,7 @@ export const createTask = defineOperation({
   name: "create_task",
   kind: "write",
   summary:
-    'Creates a task under a project. projectId is required — pass a project\'s id, or the literal "inbox" to file it in the configured inbox project. A task has its own state and can be transitioned.',
+    "Creates a task under a project. projectId is required: pass a real project's id (list projects with project list). The Inbox takes no new work, so the literal \"inbox\" and the Inbox project's id are refused. A task has its own state and can be transitioned.",
   contract: {
     // The title convention (MILESTONES.md #131). Declared here so a
     // caller reaches it the moment it is refused on any other field —
@@ -121,9 +123,6 @@ export const createTask = defineOperation({
       body: "The reset link expires too fast.",
       area: "web",
       originType: "auto",
-      // Not the literal "inbox" — see `create_work`'s identical example for
-      // why the worked example points at a real lookup rather than the
-      // sentinel, even though the sentinel itself stays supported.
       projectId: "<a project id from a project listing>",
     },
   },
@@ -135,10 +134,9 @@ export const createTask = defineOperation({
   ): Promise<CreatedItem | CreatedWriteRecord> {
     const { projectId, ...common } = input;
 
-    const parentId =
-      projectId === INBOX_PROJECT_ID ? await resolveInboxProject(ctx, common) : projectId;
+    await assertNotInboxProject(ctx, projectId);
 
-    const depth = await ancestorDepthOf(ctx, parentId);
+    const depth = await ancestorDepthOf(ctx, projectId);
     if (depth === undefined) {
       throw new NotFoundError(`No such project: ${projectId}.`, { fields: ["projectId"] });
     }
@@ -153,16 +151,7 @@ export const createTask = defineOperation({
       );
     }
 
-    const created = await insertItem(ctx, common as CommonCreateInput, { id: parentId, depth });
-    // Attached here rather than inside `insertItem`, mirroring where
-    // `toCreatedWriteRecord` already lives: `insertItem` is the shared
-    // funnel and has no notion of "resolved to the inbox" — only this
-    // operation resolved the sentinel, a few lines up, so only this
-    // operation knows whether to say so.
-    const withProjectAdvice =
-      projectId === INBOX_PROJECT_ID
-        ? { ...created, projectAdvice: PROJECT_ADVICE_MESSAGE }
-        : created;
-    return input.full ? withProjectAdvice : toCreatedWriteRecord(withProjectAdvice);
+    const created = await insertItem(ctx, common as CommonCreateInput, { id: projectId, depth });
+    return input.full ? created : toCreatedWriteRecord(created);
   },
 });

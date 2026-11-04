@@ -332,16 +332,15 @@ describeIfDb("delete_item", () => {
     // inbox would archive silently and later capture would land in a
     // different project from everything already filed.
     it("refuses the project the items.inbox_project setting names", async () => {
-      const task = await call<{ parentId: string }>("create_task", {
-        title: "Captured, so the inbox exists",
+      const inbox = await call<{ id: string }>("create_project", {
+        title: String(defaultSnapshot().values["items.inbox_project"]),
         body: "",
         area: "inbox-archive-ref",
         originType: "auto",
-        projectId: "inbox",
       });
 
       const rejection = await rejectionOf("delete_item", {
-        id: task.parentId,
+        id: inbox.id,
         reason: GOOD_REASON,
       });
       expect(rejection.code).toBe("guard_rejected");
@@ -361,16 +360,15 @@ describeIfDb("delete_item", () => {
     // Fails if the inbox reference is turned into an unconditional refusal
     // instead of an acknowledgeable one.
     it("archives the inbox once the caller acknowledges the setting", async () => {
-      const task = await call<{ parentId: string }>("create_task", {
-        title: "Captured, so the inbox exists",
+      const inbox = await call<{ id: string }>("create_project", {
+        title: String(defaultSnapshot().values["items.inbox_project"]),
         body: "",
         area: "inbox-archive-ack",
         originType: "auto",
-        projectId: "inbox",
       });
 
       const archived = await call<Created>("delete_item", {
-        id: task.parentId,
+        id: inbox.id,
         reason: GOOD_REASON,
         acknowledgeReferences: true,
       });
@@ -1473,7 +1471,7 @@ describeIfDb("delete_item", () => {
         my_work: { sessionId: "sweep-session" },
         orientation: { itemId: project.id },
         progress_report: { sessionId: "sweep-session", includeCompleted: true },
-        repair_stuck_projects: { projectId: "inbox", area: "archive-sweep", apply: false },
+        repair_stuck_projects: { projectId: project.id, area: "archive-sweep", apply: false },
         get_projects: { area: "archive-sweep", includeCompleted: true },
         // Range over items rather than their own tables, so they are swept
         // rather than exempted. `get_fleet` returns live assignments — the

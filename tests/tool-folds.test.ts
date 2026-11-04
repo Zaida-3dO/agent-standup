@@ -507,19 +507,16 @@ describeIfDb("the folded loop and create_work tools, against Postgres", () => {
     });
 
     // The id of the Inbox is as much "the Inbox" as the shortcut is. The
-    // project exists here only because create_task (HTTP/CLI) still resolves
-    // the shortcut for existing callers. Breaks if: the id lookup is dropped
-    // and only the literal is refused.
+    // project is seeded directly: a live root titled with the setting's value.
+    // Breaks if: the id lookup is dropped and only the literal is refused.
     it("refuses the id of the Inbox project, the same way", async () => {
-      const filed = await call<{ parentId: string }>("create_task", {
-        title: "Filed through the HTTP shortcut",
+      const inbox = await call<{ id: string }>("create_project", {
+        title: String(defaultSnapshot().values["items.inbox_project"]),
         body: "b",
         area: "web",
         originType: "auto",
-        projectId: "inbox",
-        full: true,
       });
-      const inboxId = filed.parentId;
+      const inboxId = inbox.id;
       const before = await prisma.item.count();
 
       const error = await rejection(

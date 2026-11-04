@@ -16,11 +16,10 @@
 // validates before the handler runs, so this suite is not DB-gated.
 import { describe, expect, it } from "vitest";
 import { createProject } from "@/lib/service/operations/create-project";
-import { createTask, INBOX_PROJECT_ID } from "@/lib/service/operations/create-task";
+import { createTask } from "@/lib/service/operations/create-task";
 import { createSubtask } from "@/lib/service/operations/create-subtask";
 import { normalizeEmDash } from "@/lib/text-normalize";
 import { CREATE_KINDS, CREATE_KIND_ORDER, DEFAULT_PRIORITY } from "@/lib/create/kinds";
-import { INBOX_PROJECT_ID as UI_INBOX_PROJECT_ID } from "@/lib/create/inbox";
 import { createRequestBody, emptyDraft, titlePreview } from "@/lib/create/state";
 import type { QuickCreateDraft } from "@/lib/create/state";
 
@@ -42,14 +41,6 @@ const OPERATIONS = {
 } as const;
 
 describe("the duplicated constants agree with the modules that own them", () => {
-  // `src/lib/create/inbox.ts` re-declares this rather than importing the
-  // operation, so the service layer stays out of the client bundle. That is
-  // a drift risk, and this is the check that makes it a checked duplication
-  // rather than a hoped-for one.
-  it("re-declares the inbox sentinel as exactly the literal create_task owns", () => {
-    expect(UI_INBOX_PROJECT_ID).toBe(INBOX_PROJECT_ID);
-  });
-
   it("names, for each kind, the operation that operation actually registers", () => {
     for (const kind of CREATE_KIND_ORDER) {
       expect(CREATE_KINDS[kind].operation).toBe(OPERATIONS[kind].name);
@@ -132,10 +123,11 @@ describe("createRequestBody produces a body each operation accepts", () => {
     expect(parsed.success).toBe(true);
   });
 
-  it("sends the inbox sentinel when a task names no project, and it parses", () => {
+  it("sends no inbox sentinel for a task with no project: the draft is blocked before a body is built", () => {
+    // The dialog refuses an empty project (see create-state), so a body built
+    // from one carries an empty string, never the literal "inbox".
     const body = createRequestBody(draftFor("task", { parent: "" }));
-    expect(body.projectId).toBe(INBOX_PROJECT_ID);
-    expect(createTask.input.safeParse(body).success).toBe(true);
+    expect(body.projectId).not.toBe("inbox");
   });
 
   it("sends the named project when a task names one", () => {

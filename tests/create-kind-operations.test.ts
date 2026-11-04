@@ -39,8 +39,6 @@ interface Created {
   titleAdvice?: string;
   /** Present only when the headline, body or a subtask's title departs from the people-first rules. */
   fieldAdvice?: string;
-  /** Present only when `projectId` resolved to the inbox catch-all. */
-  projectAdvice?: string;
 }
 
 interface Rejection {
@@ -271,12 +269,22 @@ describeIfDb("explicit create operations", () => {
     });
   });
 
-  describe('create_task with projectId "inbox"', () => {
+  // The Inbox still exists as a place existing items can be moved into
+  // (`reparent_item` with `parentId: "inbox"`); only creating new work there is
+  // refused. These cases pin the resolver that move goes through.
+  describe('reparent_item with parentId "inbox"', () => {
+    /** Files a fresh childless project under the Inbox, which makes it a task there. */
+    async function intoInbox(title: string, area: string, rt: ServiceRuntime = runtime) {
+      const stuck = (await rt.call("create_project", base(title, area))) as Created;
+      return (await rt.call("reparent_item", {
+        id: stuck.id,
+        parentId: "inbox",
+        full: true,
+      })) as Created;
+    }
+
     it("creates the inbox project on first use and files the task under it", async () => {
-      const task = await call("create_task", {
-        ...base("Captured quickly", "inbox-area"),
-        projectId: "inbox",
-      });
+      const task = await intoInbox("Captured quickly", "inbox-area");
 
       expect(task.kind).toBe("task");
       expect(task.parentId).not.toBeNull();
@@ -294,14 +302,8 @@ describeIfDb("explicit create operations", () => {
     // Fails if `resolveInboxProject` drops its SELECT and always inserts —
     // the two tasks would land under two different projects.
     it("reuses the same inbox project on a second capture", async () => {
-      const first = await call("create_task", {
-        ...base("First capture", "inbox-reuse"),
-        projectId: "inbox",
-      });
-      const second = await call("create_task", {
-        ...base("Second capture", "inbox-reuse"),
-        projectId: "inbox",
-      });
+      const first = await intoInbox("First capture", "inbox-reuse");
+      const second = await intoInbox("Second capture", "inbox-reuse");
 
       expect(second.parentId).toBe(first.parentId);
 
@@ -320,20 +322,14 @@ describeIfDb("explicit create operations", () => {
       // at a real row. The only symptom is that capture stops appearing.
       //
       // Fails if the `archivedAt IS NULL` term is dropped from the lookup.
-      const first = await call("create_task", {
-        ...base("Before the archive", "inbox-archived"),
-        projectId: "inbox",
-      });
+      const first = await intoInbox("Before the archive", "inbox-archived");
 
       await prisma.$executeRawUnsafe(
         `UPDATE "Item" SET "archivedAt" = CURRENT_TIMESTAMP WHERE "id" = $1`,
         first.parentId,
       );
 
-      const second = await call("create_task", {
-        ...base("After the archive", "inbox-archived"),
-        projectId: "inbox",
-      });
+      const second = await intoInbox("After the archive", "inbox-archived");
 
       // A different project — the sentinel minted a fresh inbox, exactly as
       // it would on a database where none had ever existed.
@@ -353,14 +349,8 @@ describeIfDb("explicit create operations", () => {
       // every capture mint a new project. Fails if the lookup is broken
       // outright rather than narrowed — which the archived test alone would
       // not catch, since a resolver that always inserts also passes it.
-      const first = await call("create_task", {
-        ...base("One", "inbox-live-control"),
-        projectId: "inbox",
-      });
-      const second = await call("create_task", {
-        ...base("Two", "inbox-live-control"),
-        projectId: "inbox",
-      });
+      const first = await intoInbox("One", "inbox-live-control");
+      const second = await intoInbox("Two", "inbox-live-control");
       expect(second.parentId).toBe(first.parentId);
     });
 
@@ -377,10 +367,7 @@ describeIfDb("explicit create operations", () => {
           }),
       });
 
-      const task = (await configured.call("create_task", {
-        ...base("Into the configured inbox", "configured-inbox"),
-        projectId: "inbox",
-      })) as Created;
+      const task = await intoInbox("Into the configured inbox", "configured-inbox", configured);
 
       const parent = await prisma.$queryRawUnsafe<{ title: string }[]>(
         `SELECT "title" FROM "Item" WHERE "id" = $1`,
@@ -392,10 +379,7 @@ describeIfDb("explicit create operations", () => {
     // The inbox is an item, so its creation is a ledger row like any other
     // (SCHEMA.md §3). Fails if the resolver's `appendEvent` call is removed.
     it("records the inbox project's creation in the event ledger", async () => {
-      const task = await call("create_task", {
-        ...base("Ledger check", "inbox-ledger-area"),
-        projectId: "inbox",
-      });
+      const task = await intoInbox("Ledger check", "inbox-ledger-area");
       // A fresh scratch DB shares one "Inbox" across this file, so the
       // parent may pre-date this call — assert it has an event, not that it
       // has exactly one from this call.
@@ -705,6 +689,24 @@ describeIfDb("explicit create operations", () => {
       expect(response.status).toBe(400);
       const payload = (await response.json()) as { error: { code: string } };
       expect(payload.error.code).toBe("invalid_input");
+    });
+
+    // The HTTP path is one of the ways the Inbox used to be filed into. Fails
+    // if the route resolves the shortcut again: a 201 and a new row.
+    it("POST /api/tasks refuses the inbox shortcut with a 4xx and writes nothing", async () => {
+      const rows = () =>
+        prisma.$queryRawUnsafe<{ count: bigint }[]>(
+          `SELECT COUNT(*)::bigint AS "count" FROM "Item"`,
+        );
+      const before = Number((await rows())[0]?.count);
+      const response = await routes.tasks.POST(
+        post("/api/tasks", { ...base("Aimed at the inbox", "route-area"), projectId: "inbox" }),
+      );
+      expect(response.status).toBe(400);
+      const payload = (await response.json()) as { error: { code: string; fields?: string[] } };
+      expect(payload.error.code).toBe("invalid_input");
+      expect(payload.error.fields).toEqual(["projectId"]);
+      expect(Number((await rows())[0]?.count)).toBe(before);
     });
 
     it("maps an unknown parent to 404", async () => {
@@ -1074,46 +1076,86 @@ describeIfDb("explicit create operations", () => {
     });
   });
 
-  // ── The catch-all project literal, advised rather than silent (same
-  // batch) ───────────────────────────────────────────────────────────────
+  // ── The Inbox takes no new work, by any path ──────────────────────────
   //
-  // `"inbox"` stays fully supported — this suite does not remove it, only
-  // asserts that resolving to it is now visible on the response.
-  describe("the catch-all project advisory", () => {
-    // Fails if `projectAdvice` stops firing when a create resolves
-    // `projectId` to the inbox sentinel — the whole point of #131's
-    // mechanism being reused for this field.
-    it("says so when create_task resolves projectId to the inbox", async () => {
-      const task = await call("create_task", {
-        ...base("File this for triage later", "catch-all"),
-        projectId: "inbox",
-      });
-      expect(task.projectAdvice).toBeDefined();
-      expect(task.projectAdvice).toContain("inbox");
-    });
+  // `create_task` owns the refusal and `create_work` delegates to it, so one
+  // handler answers for both. Each case asserts that nothing was written.
+  describe("the Inbox is refused as a project", () => {
+    async function itemCount(): Promise<number> {
+      const rows = await prisma.$queryRawUnsafe<{ count: bigint }[]>(
+        `SELECT COUNT(*)::bigint AS "count" FROM "Item"`,
+      );
+      return Number(rows[0]?.count ?? 0n);
+    }
 
-    // Fails if a create naming a real project is advised anyway, which
-    // would make the note meaningless noise on the overwhelmingly common
-    // path.
-    it("says nothing when a real project is named", async () => {
+    /** The Inbox project: a live root titled with the `items.inbox_project` setting. */
+    async function seedInbox(): Promise<string> {
+      const inbox = await call("create_project", {
+        ...base(String(defaultSnapshot().values["items.inbox_project"]), "catch-all"),
+      });
+      return inbox.id;
+    }
+
+    // Fails if the literal "inbox" resolves again in create_task.
+    for (const name of ["create_task", "create_work"] as const) {
+      const extra = name === "create_work" ? { type: "task" } : {};
+
+      it(`${name} refuses the literal "inbox" and writes nothing`, async () => {
+        const before = await itemCount();
+        const rejection = await rejectionOf(name, {
+          ...extra,
+          ...base("File this for triage later", "catch-all"),
+          projectId: "inbox",
+        });
+        expect(rejection.code).toBe("invalid_input");
+        expect(rejection.fields).toEqual(["projectId"]);
+        expect(rejection.message).toContain("The Inbox does not take new work");
+        expect(rejection.message).toContain("project list");
+        expect(await itemCount()).toBe(before);
+      });
+
+      it(`${name} refuses the id of the Inbox project and writes nothing`, async () => {
+        const inboxId = await seedInbox();
+        const before = await itemCount();
+        const rejection = await rejectionOf(name, {
+          ...extra,
+          ...base("Filed by id", "catch-all"),
+          projectId: inboxId,
+        });
+        expect(rejection.code).toBe("invalid_input");
+        expect(rejection.fields).toEqual(["projectId"]);
+        expect(await itemCount()).toBe(before);
+      });
+    }
+
+    // A repair is a bulk move into the named project, so the Inbox is refused
+    // there too, before the scan runs (a dry run included).
+    for (const apply of [false, true]) {
+      it(`repair_stuck_projects refuses the Inbox as a destination (apply: ${apply})`, async () => {
+        const stuck = await call("create_project", base("A stuck root", "catch-all"));
+        for (const projectId of ["inbox", await seedInbox()]) {
+          const rejection = await rejectionOf("repair_stuck_projects", { projectId, apply });
+          expect(rejection.code).toBe("invalid_input");
+          expect(rejection.fields).toEqual(["projectId"]);
+          expect(rejection.message).toContain("The Inbox does not take new work");
+        }
+        // Nothing moved: the stuck root is still a root.
+        const rows = await prisma.$queryRawUnsafe<{ parentId: string | null }[]>(
+          `SELECT "parentId" FROM "Item" WHERE "id" = $1`,
+          stuck.id,
+        );
+        expect(rows[0]?.parentId).toBeNull();
+      });
+    }
+
+    // Fails if the refusal is over-broad: an ordinary project still takes a task.
+    it("still files a task under a real project", async () => {
       const project = await call("create_project", base("A real destination", "catch-all"));
       const task = await call("create_task", {
         ...base("Filed under the real project", "catch-all"),
         projectId: project.id,
       });
-      expect(task.projectAdvice).toBeUndefined();
-    });
-
-    // `create_work` dispatches to `create_task`'s own handler and returns
-    // its result unedited (create-work.ts) — fails if that delegation ever
-    // stops carrying the advisory through.
-    it("carries the advisory through create_work's task delegation", async () => {
-      const task = await call("create_work", {
-        type: "task",
-        ...base("Filed via create_work with no project", "catch-all"),
-        projectId: "inbox",
-      });
-      expect(task.projectAdvice).toBeDefined();
+      expect(task.parentId).toBe(project.id);
     });
   });
 });

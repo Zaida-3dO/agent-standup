@@ -377,7 +377,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     verb: "retype",
     operation: "retype_to_task",
     summary:
-      "Turn a childless project into a task under --projectId (an item id, or the literal `inbox`) — the fix for a row created with no parent and therefore no state of its own. Leaves state alone. --full returns the whole row rather than the slim default.",
+      "Turn a childless project into a task under --projectId (a real project id; the Inbox takes no new work and is refused) — the fix for a row created with no parent and therefore no state of its own. Leaves state alone. --full returns the whole row rather than the slim default.",
     buildInput: (rest, flags) => {
       const id = rest[0];
       if (id === undefined) {
@@ -456,7 +456,7 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
     verb: "create",
     operation: "create_task",
     summary:
-      'Create a task under a project. --projectId is required; pass a project id, or "inbox" for the configured inbox project.',
+      "Create a task under a project. --projectId is required; pass the id of a real project (the Inbox takes no new work and is refused).",
     buildInput: (_rest, flags) => flagsToInput(flags),
   },
   {
