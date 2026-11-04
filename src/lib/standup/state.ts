@@ -22,10 +22,10 @@ import { buildOvernightReport, defaultCutoff, type OvernightReport } from "./ove
  * full, because `buildOvernightReport`'s `movedTo` needs `payload.to` to tell
  * a move into `blocked` from any other change, and that read is filtered on
  * the server (`types: ["state_change"]`), so it never pays the heavy shape for
- * the other kinds. The earlier version read every event in full: 15 of them
- * measured about 700,000 characters against the 200,000-character response guard
- * (`response-size.ts`), `/api/events` came back 422, and the whole page went
- * blank with it.
+ * the other kinds. Reading every event in full is what this avoids: full events
+ * can be several thousand characters each, so even a short page of them can
+ * exceed the 200,000-character response guard (`response-size.ts`), which
+ * refuses the read and blanks the section.
  *
  * Both reads start from the same cursor and ask for the same number of rows,
  * so the full `state_change` read covers the window the slim read covers (or
@@ -102,7 +102,7 @@ export type StandupLoadState =
  *
  * The slim slice is the report's view of the window (merges need nothing
  * more); the full read supplies `payload` for the one type that needs it. A
- * full event replaces the slim one with the same id; a full event the slim
+ * full event stands in for the slim one with the same id; a full event the slim
  * page did not reach (it is newer, since both start from the same cursor) is
  * kept rather than dropped. Nothing else is touched, so every event the slim
  * read returned is still there for the report to measure its window by.

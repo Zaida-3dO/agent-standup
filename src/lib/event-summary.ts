@@ -2,10 +2,10 @@
 //
 // Copying a field's whole before and after value onto the event is the right
 // record for a small field, and small fields get exactly that. For a large one
-// it is a defect: an item with a ~28,000 character `customFields` value that is
-// rewritten on every edit would store ~56,000 characters of payload per edit,
-// and a read of the last few events would come to 700,000 characters — over the
-// response limit, which blanks a page.
+// it is a defect: an item with a very large `customFields` value (tens of
+// thousands of characters) that is rewritten on every edit would store twice
+// that much payload per edit, and a read of the last few events would come to
+// several times the response limit, which blanks a page.
 //
 // A large value is therefore recorded as a *summary*: that the field changed,
 // how big each side was, and a short hash of each side (enough to tell two

@@ -292,7 +292,7 @@ export interface ItemDetailOutput {
    *
    * Counts only, so the detail stays small however large a document grows;
    * the entries are read with `doc_get`. This is what lets the item page say
-   * "progress: 31 entries, 28 KB" without carrying the progress.
+   * "notes: 12 entries, 9 KB" without carrying the progress.
    */
   readonly documents: readonly ItemDocumentSummary[];
 }

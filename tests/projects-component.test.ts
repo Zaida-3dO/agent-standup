@@ -330,7 +330,7 @@ describe("ProjectCard", () => {
             {
               holderId: "user-a",
               holderType: "person",
-              displayName: "Dana",
+              displayName: "user-a",
               role: "builder",
               roleCustom: null,
               liveness: "running",
@@ -340,7 +340,7 @@ describe("ProjectCard", () => {
         }),
         now: NOW,
       });
-      expect(textOf(tree)).toContain("Dana");
+      expect(textOf(tree)).toContain("user-a");
     });
 
     it("renders no presence rows when nobody holds it", () => {

@@ -237,9 +237,9 @@ describe("recordFieldChanges writes the summary, not the value", () => {
     expect(payloads).toEqual([{ field: "priority", from: "P2", to: "P0" }]);
   });
 
-  it("stores a summary for a 28,000-character customFields edit, a few hundred characters long", async () => {
+  it("stores a summary for a very large customFields edit, a few hundred characters long", async () => {
     const { db, payloads } = fakeHandle();
-    const progress = (marker: string) => ({ sessions: marker.repeat(28000) });
+    const progress = (marker: string) => ({ sessions: marker.repeat(20000) });
     await recordFieldChanges(db, {
       itemId: "item-1",
       actor,

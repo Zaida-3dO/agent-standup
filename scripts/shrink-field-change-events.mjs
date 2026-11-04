@@ -9,7 +9,7 @@
  * of each changed field onto its `field_change` event. For an item whose
  * `customFields` value is tens of thousands of characters and is rewritten on
  * every edit, that is ~2x that size per edit, kept forever — enough that a read
- * of the last few events came to 700,000 characters and was refused. Fixing the
+ * of the last few events came to several times the response limit and was refused. Fixing the
  * writer stops new events growing; this script shrinks the ones already stored,
  * to the same summary the writer now produces (field, that it changed, old and
  * new sizes, a short hash of each, and the changed keys of an object value).

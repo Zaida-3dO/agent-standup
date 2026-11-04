@@ -30,8 +30,8 @@ describe("a headline that repeats the title", () => {
     expect(
       rulesFor({
         repeatCheck: {
-          title: "Production time counts the cards in a pack",
-          headline: "Production time counts the cards in a pack",
+          title: "Order history shows refunds",
+          headline: "Order history shows refunds",
         },
       }),
     ).toContain("headline_repeats_title");
@@ -46,8 +46,8 @@ describe("a headline that repeats the title", () => {
   it("flags a copy with a date and request-number prefix, the shape a progress script writes", () => {
     expect(
       headlineRepeatsTitle(
-        "Production time counts the cards in a pack",
-        "3 Nov #24 - Production time counts the cards in a pack",
+        "Order history shows refunds",
+        "12 Mar #8 - Order history shows refunds",
       ),
     ).toBe(true);
   });
@@ -55,8 +55,8 @@ describe("a headline that repeats the title", () => {
   it("does not flag a headline that adds something the title does not say", () => {
     expect(
       headlineRepeatsTitle(
-        "Production time counts the cards in a pack",
-        "A pack counts as its singles, and the delivery dates on the product page and basket use it.",
+        "Order history shows refunds",
+        "A refund shows on its order, and the totals on the account page use it.",
       ),
     ).toBe(false);
   });
@@ -92,7 +92,7 @@ describe("a headline that carries what the board should not show", () => {
 
   it("flags a quoted approval, a link and a codename", () => {
     const rules = rulesFor({
-      headline: 'Dana said "yes start it please", see https://example.com for wave 2.',
+      headline: 'UserA said "go ahead and start please", see https://example.com for wave 2.',
     });
     expect(rules).toContain("quoted_text");
     expect(rules).toContain("url");
@@ -116,7 +116,7 @@ describe("a headline that carries what the board should not show", () => {
 
   it("does not hold a headline to the title-only rules (a comma list, a dash, a colon)", () => {
     const rules = rulesFor({
-      headline: "Furnishing the house: windows, curtains and furniture - all in plain words.",
+      headline: "Tidying the garden: paths, borders and planters - all in plain words.",
     });
     expect(rules).not.toContain("title_separator");
     expect(rules).not.toContain("title_long");
@@ -126,10 +126,10 @@ describe("a headline that carries what the board should not show", () => {
 
 describe("plain headlines stay silent", () => {
   const PLAIN = [
-    "Furnishing the house: windows, curtains and furniture.",
-    "Let Home Assistant open the viewer app on the TVs with a link.",
-    "Production time counts a pack as its singles, and the delivery dates on the product page and basket use it.",
-    "Fixed the reported problems and added themes, sounds and a saved-for-later list.",
+    "Tidying the garden: paths, borders and planters.",
+    "Let the dashboard open the report page on the wall screens with a link.",
+    "Order history counts a refund against its order, and the totals on the account page use it.",
+    "Fixed the reported problems and added export, filters and a pinned list.",
     "Waiting on the supplier to confirm the new price list.",
     "People can now reset a password without asking for help.",
     "Stop double-charging annual subscribers.",
@@ -170,7 +170,7 @@ describe("the body size nudge", () => {
 
 describe("a subtask that reads like an implementation step", () => {
   const STEPS = [
-    "Split the container ports and the reverse proxy",
+    "Split the worker queue and the scheduler",
     "Refactor the mailer",
     "Wire the button to the handler",
     "Bump the base image",
@@ -188,9 +188,9 @@ describe("a subtask that reads like an implementation step", () => {
   const RESULTS = [
     "Send the reset email",
     "Let people reset a forgotten password",
-    "Move the admin page to its own address",
-    "Show the delivery date on the basket",
-    "Make the print proof available to the studio",
+    "Move the settings page to its own address",
+    "Show the order total on the receipt",
+    "Make the invoice available to the customer",
     "Add a rate limit to the sign-in page",
     "Fix the crash when saving a draft",
   ];

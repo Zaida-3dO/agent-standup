@@ -1071,7 +1071,7 @@ agent-only — a plan, a log, a progress page — does not belong in the title, 
 entries that agents read when they need them. Nothing that returns an item returns its documents:
 the board, the item card and `get_item` never carry one, and `get_item_detail` carries only a count
 and a size per document (`documents: [{doc, entries, bytes}]`), which the item page renders as one
-plain line each — `progress: 31 entries, 28 KB`.
+plain line each — `notes: 12 entries, 9 KB`.
 
 Two tables, additive, both cascading with their item:
 

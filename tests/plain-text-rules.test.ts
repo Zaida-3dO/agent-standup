@@ -33,7 +33,7 @@ describe("title rules: shapes that must be caught", () => {
   // The project-name shape: a short name, a dash, then the explanation.
   it("flags a name followed by a dash and a long explanation", () => {
     const rules = rulesFor(
-      "Home Hub - furnish the house: windows, curtains, furniture, footstep zones, grouped specs",
+      "Garden Planner - tidy the garden: paths, borders, planters, lighting zones, grouped specs",
     );
     expect(rules).toContain("title_separator");
     expect(rules).toContain("title_long");
@@ -53,7 +53,7 @@ describe("title rules: shapes that must be caught", () => {
   });
 
   it("flags a second colon even after a one-word label", () => {
-    expect(rulesFor("Helm: fixes: themes")).toContain("title_separator");
+    expect(rulesFor("Notes: fixes: themes")).toContain("title_separator");
   });
 
   describe("dates", () => {
@@ -74,7 +74,7 @@ describe("title rules: shapes that must be caught", () => {
   });
 
   it("flags a leading request number and date, the shape a progress script writes", () => {
-    const rules = rulesFor("3 Nov #24 - Production time counts the cards in a pack");
+    const rules = rulesFor("12 Mar #8 - Order history shows refunds");
     expect(rules).toContain("date");
     expect(rules).toContain("cross_reference");
     expect(rules).toContain("title_separator");
@@ -82,7 +82,7 @@ describe("title rules: shapes that must be caught", () => {
 
   it("flags a leading 'Name date:' prefix and says it is an author tag", () => {
     const findings = findTitleFindings(
-      'Dana 2026-10-17: "yes start it and ship it please" - deep link',
+      'UserA 2026-01-05: "go ahead and ship it please" - deep link',
     );
     const rules = findings.map((finding) => finding.rule);
     expect(rules).toContain("author_date");
@@ -93,7 +93,7 @@ describe("title rules: shapes that must be caught", () => {
   });
 
   it("flags a bracketed author-and-date tag", () => {
-    expect(rulesFor("Furnish the house (Dana 2026-10-29)")).toContain("author_date");
+    expect(rulesFor("Tidy the garden (UserA 2026-01-05)")).toContain("author_date");
   });
 
   describe("ids", () => {
@@ -110,10 +110,10 @@ describe("title rules: shapes that must be caught", () => {
 
   describe("quoted text", () => {
     it("flags a double-quoted sentence", () => {
-      expect(rulesFor('Handle "yes start it please" requests')).toContain("quoted_text");
+      expect(rulesFor('Handle "go ahead and start please" requests')).toContain("quoted_text");
     });
     it("flags curly quotes", () => {
-      expect(rulesFor("Handle “yes start it please” requests")).toContain("quoted_text");
+      expect(rulesFor("Handle “go ahead and start please” requests")).toContain("quoted_text");
     });
     it("flags a single-quoted sentence that opens after a space", () => {
       expect(rulesFor("Handle 'start it now' requests")).toContain("quoted_text");
@@ -134,20 +134,20 @@ describe("title rules: shapes that must be caught", () => {
 
   describe("codenames", () => {
     it("flags a wave id", () => {
-      expect(rulesFor("Finish the w12 fixes")).toContain("codename");
+      expect(rulesFor("Finish the w7 fixes")).toContain("codename");
     });
     it("flags a lettered and a numbered wave", () => {
       expect(rulesFor("Ship Wave A fixes")).toContain("codename");
       expect(rulesFor("Ship wave 2 fixes")).toContain("codename");
     });
     it("flags a crew name", () => {
-      expect(rulesFor("Hand over to crew-w12 now")).toContain("codename");
+      expect(rulesFor("Hand over to crew-w7 now")).toContain("codename");
     });
   });
 
   describe("branch names", () => {
     it("flags a label-segment branch", () => {
-      expect(rulesFor("Merge w12-health-delight into the release")).toContain("branch_name");
+      expect(rulesFor("Merge w7-blue-ladder into the release")).toContain("branch_name");
     });
     it("flags a prefixed branch", () => {
       expect(rulesFor("Merge fix-login-redirect when green")).toContain("branch_name");
@@ -199,11 +199,11 @@ describe("title rules: ordinary prose must stay silent", () => {
   // trains callers to ignore the advice, which costs more than the feature.
   const PLAIN = [
     "Open the viewer on the TVs from the home dashboard",
-    "Production time counts the cards in a pack",
+    "Order history shows refunds",
     "Let people reset a forgotten password",
-    "Move the admin page to its own address",
+    "Move the settings page to its own address",
     // The plan's own better-title shape: a one-word label and one colon on a short title.
-    "Helm: fixes, themes, sounds and saved for later",
+    "Notes: fixes, themes, sounds and saved for later",
     "Fix: the crash on save",
     // Hyphenated English is not a branch name.
     "Make the install up-to-date",
@@ -245,7 +245,7 @@ describe("title rules: ordinary prose must stay silent", () => {
 
   it("keeps the one-word-label exemption narrow: it needs a short title", () => {
     // Nine words after a one-word label is a sentence, not a label.
-    expect(hasTitleSeparator("Helm: fixes themes sounds and a saved list for later use")).toBe(
+    expect(hasTitleSeparator("Notes: fixes themes sounds and a saved list for later use")).toBe(
       true,
     );
   });
@@ -270,7 +270,7 @@ describe("plain-text rules are bounded", () => {
 describe("a non-title field gets the plain rules without the title-only ones", () => {
   it("does not apply the length or separator rule to a headline", () => {
     const rules = findPlainTextFindings(
-      "Furnishing the house: windows, curtains; and furniture - all of it, in plain words for everyone to read",
+      "Tidying the garden: paths, borders; and planters - all of it, in plain words for everyone to read",
       "headline",
     ).map((finding) => finding.rule);
     expect(rules).not.toContain("title_long");

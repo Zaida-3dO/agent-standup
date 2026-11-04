@@ -4,9 +4,9 @@
 // installation:
 //
 //   1. **The overnight report reads events slim.** It asks for `full` only
-//      with `types=state_change`, because the heavy shape on every event came
-//      to about 700,000 characters for 15 of them and `GET /api/events` was refused
-//      (422) by the response-size guard.
+//      with `types=state_change`, because the heavy shape on every event adds
+//      up to several times the response-size guard over a short page, and
+//      `GET /api/events` is refused (422).
 //   2. **The sections load and fail independently.** The reads used to share
 //      one `Promise.all`, so one refused read erased the whole page. Each
 //      section now settles on its own, and a failed one carries its own short
@@ -390,7 +390,7 @@ describe("the overnight section degrades figure by figure", () => {
 });
 
 describe("overlayStateChanges", () => {
-  it("replaces a slim event with its full counterpart by id", () => {
+  it("prefers the full event over the slim one with the same id", () => {
     const slim = [event({ id: "1", type: "state_change" }), event({ id: "2", type: "merge" })];
     const full = [event({ id: "1", type: "state_change", payload: { to: "blocked" } })];
     const merged = overlayStateChanges(slim, full);

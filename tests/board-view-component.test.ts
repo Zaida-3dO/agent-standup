@@ -826,12 +826,12 @@ describe("ItemCard", () => {
       const held: BoardEntry = {
         ...entry("in_progress"),
         assignments: [
-          assignment({ holderType: "agent", displayName: "crew-w12", liveness: "running" }),
+          assignment({ holderType: "agent", displayName: "crew-w7", liveness: "running" }),
         ],
       };
       const card = ItemCard({ entry: held, needsYou: false, now: 0 });
       expect(textOf(card)).toContain("an agent");
-      expect(textOf(card)).not.toContain("crew-w12");
+      expect(textOf(card)).not.toContain("crew-w7");
       const [dot] = findAllByType(card, AgentPresenceDot);
       expect((dot!.props as { agentName?: string }).agentName).toBe("an agent");
     });

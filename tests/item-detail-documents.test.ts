@@ -1,5 +1,5 @@
 // The one plain line the item page says about each document an item carries
-// ("progress: 31 entries, 28 KB"). Pure, so no database: the claims are about
+// ("notes: 12 entries, 9 KB"). Pure, so no database: the claims are about
 // how a count and a size are worded, and about what happens at the edges of
 // each unit, where a formatter is usually wrong.
 import { describe, expect, it } from "vitest";
@@ -12,9 +12,9 @@ describe("formatDocumentSize", () => {
     expect(formatDocumentSize(999)).toBe("999 bytes");
   });
 
-  it("uses decimal kilobytes, so 28,000 bytes reads as 28 KB and not 27", () => {
+  it("uses decimal kilobytes, so 9,000 bytes reads as 9 KB and not 8.8", () => {
     // Killed by dividing by 1024 instead of 1000.
-    expect(formatDocumentSize(28_000)).toBe("28 KB");
+    expect(formatDocumentSize(9_000)).toBe("9 KB");
     expect(formatDocumentSize(1000)).toBe("1 KB");
   });
 
@@ -37,8 +37,8 @@ describe("formatDocumentSize", () => {
 
 describe("documentLine", () => {
   it("reads as the name, the entries and the size", () => {
-    expect(documentLine({ doc: "progress", entries: 31, bytes: 28_000 })).toBe(
-      "progress: 31 entries, 28 KB",
+    expect(documentLine({ doc: "notes", entries: 12, bytes: 9_000 })).toBe(
+      "notes: 12 entries, 9 KB",
     );
   });
 

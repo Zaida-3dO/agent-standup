@@ -78,7 +78,7 @@ describe("StandupHomeView — one section failing", () => {
   ] as const;
 
   for (const failed of SECTIONS) {
-    it(`replaces only the ${failed.key} block with its own error line`, () => {
+    it(`gives the ${failed.key} block its own error line and leaves the rest alone`, () => {
       const data: StandupData = {
         ...emptyData(),
         [failed.key]: { status: "error", message: `${failed.key} read failed` },

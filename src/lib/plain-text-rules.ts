@@ -69,7 +69,7 @@ const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i
 const HEX_TOKEN = /\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,}\b/i;
 
 /**
- * Quoted text of more than one word: `"yes start it please"`, curly quotes,
+ * Quoted text of more than one word: `"go ahead and start please"`, curly quotes,
  * or single quotes that open after a space or bracket (so an apostrophe in
  * `users' sessions` never opens one). A single quoted word (`rename "Inbox"`)
  * is a name, not quoted speech, and is left alone.
@@ -106,8 +106,8 @@ const AUTHOR_DATE = new RegExp(
 const URL_SHAPE = /\b[a-z][a-z0-9+.-]*:\/\/\S*|\bwww\.[a-z0-9-]+\.\S+/i;
 
 /**
- * An internal codename: a short wave id (`w12`), a numbered or lettered wave
- * (`Wave A`, `wave 2`, `Waves 1`), or a crew name (`crew-w12`).
+ * An internal codename: a short wave id (`w7`), a numbered or lettered wave
+ * (`Wave A`, `wave 2`, `Waves 1`), or a crew name (`crew-w7`).
  *
  * `wave` alone is ordinary English (`Handle the wave animation`); it only
  * counts when followed by a single capital letter or a number, which is how
@@ -121,7 +121,7 @@ const CODENAME_CREW = /\bcrew-[\w-]+/i;
 /**
  * A branch name: a path-style prefix (`feat/login`), or three-plus hyphenated
  * lowercase segments that either start with a branch prefix or carry a
- * letters-then-digits label segment (`w12-health-delight`).
+ * letters-then-digits label segment (`w7-blue-ladder`).
  *
  * Plain hyphenated English survives: `up-to-date`, `end-to-end`,
  * `3-step-process` and `state-of-the-art` have three or more segments but
@@ -129,7 +129,7 @@ const CODENAME_CREW = /\bcrew-[\w-]+/i;
  */
 const BRANCH_SLASH = /\b(?:feat|feature|fix|bugfix|hotfix|chore|release|wip|crew|bf)\/[\w./-]+/;
 const BRANCH_HYPHEN = /\b[a-z0-9]+(?:-[a-z0-9]+){2,}\b/g;
-// A segment of letters then digits (`w12`, `v2`): a label, where `3-step` is a count.
+// A segment of letters then digits (`w7`, `v2`): a label, where `3-step` is a count.
 const BRANCH_LABEL_SEGMENT = /(?:^|-)[a-z]+\d+[a-z0-9]*(?=-|$)/;
 const BRANCH_PREFIX = /^(?:feat|fix|bugfix|hotfix|chore|wip|crew|bf)-/;
 
@@ -172,7 +172,7 @@ function wordsIn(text: string): string[] {
  *
  * One exemption, because it is how a short scoped name is honestly written:
  * a SINGLE-word label before ONE colon on a title of eight words or fewer
- * (`Helm: fixes, themes and sounds`). A label with a date in front of it is
+ * (`Notes: fixes, themes and sounds`). A label with a date in front of it is
  * still caught by the date and author-tag rules, and a multi-word prefix or
  * a second colon is caught here.
  */

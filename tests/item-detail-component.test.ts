@@ -859,14 +859,14 @@ describe("ItemDetailView — documents", () => {
       loadState: loaded({
         documents: [
           { doc: "plan", entries: 1, bytes: 420 },
-          { doc: "progress", entries: 31, bytes: 28_000 },
+          { doc: "notes", entries: 12, bytes: 9_000 },
         ],
       }),
       activeTab: "overview",
     });
     const text = textOf(element);
     expect(text).toContain("plan: 1 entry, 420 bytes");
-    expect(text).toContain("progress: 31 entries, 28 KB");
+    expect(text).toContain("notes: 12 entries, 9 KB");
   });
 
   it("shows nothing about documents when the item has none, or the response lacks the key", () => {

@@ -904,10 +904,10 @@ describeIfDb("explicit create operations", () => {
     it("answers a title with a separator, a date and a codename, and still creates it", async () => {
       const item = await call(
         "create_project",
-        base("Home Hub - wave 2 fixes from 2026-10-29", "people-first"),
+        base("Garden Planner - wave 2 fixes from 2026-10-29", "people-first"),
       );
       expect(item.id).toBeTruthy();
-      expect(item.title).toBe("Home Hub - wave 2 fixes from 2026-10-29");
+      expect(item.title).toBe("Garden Planner - wave 2 fixes from 2026-10-29");
       expect(item.titleAdvice).toBeDefined();
       expect(item.titleAdvice).toContain("separator");
       expect(item.titleAdvice).toContain("date");
@@ -916,8 +916,8 @@ describeIfDb("explicit create operations", () => {
 
     it("says nothing about a short plain name with a plain one-sentence headline", async () => {
       const item = await call("create_project", {
-        ...base("Home Hub", "people-first"),
-        headline: "Furnishing the house with windows, curtains and furniture.",
+        ...base("Garden Planner", "people-first"),
+        headline: "Tidying the garden with paths, borders and planters.",
       });
       expect(item.titleAdvice).toBeUndefined();
       expect(item.fieldAdvice).toBeUndefined();
@@ -926,8 +926,8 @@ describeIfDb("explicit create operations", () => {
     it("flags a headline that repeats the title, and stores it anyway", async () => {
       const project = await call("create_project", base("Print shop", "people-first"));
       const item = await call("create_task", {
-        ...base("Production time counts the cards in a pack", "people-first"),
-        headline: "3 Nov #24 - Production time counts the cards in a pack",
+        ...base("Order history shows refunds", "people-first"),
+        headline: "12 Mar #8 - Order history shows refunds",
         projectId: project.id,
       });
       expect(item.fieldAdvice).toBeDefined();
@@ -938,13 +938,14 @@ describeIfDb("explicit create operations", () => {
         `SELECT "headline" FROM "Item" WHERE "id" = $1`,
         item.id,
       );
-      expect(rows[0]?.headline).toBe("3 Nov #24 - Production time counts the cards in a pack");
+      expect(rows[0]?.headline).toBe("12 Mar #8 - Order history shows refunds");
     });
 
     it("flags a headline that carries an approval quote and a link", async () => {
       const item = await call("create_project", {
         ...base("Viewer links", "people-first"),
-        headline: 'Dana said "yes start it please" - see https://example.com/spec for details.',
+        headline:
+          'UserA said "go ahead and start please" - see https://example.com/spec for details.',
       });
       expect(item.fieldAdvice).toContain("quotes someone");
       expect(item.fieldAdvice).toContain("web address");
@@ -972,11 +973,11 @@ describeIfDb("explicit create operations", () => {
     it("says a subtask that reads like an implementation step should be a loop", async () => {
       const project = await call("create_project", base("Admin site", "people-first"));
       const task = await call("create_task", {
-        ...base("Move the admin page to its own address", "people-first"),
+        ...base("Move the settings page to its own address", "people-first"),
         projectId: project.id,
       });
       const step = await call("create_subtask", {
-        ...base("Split the container ports and the reverse proxy", "people-first"),
+        ...base("Split the worker queue and the scheduler", "people-first"),
         taskId: task.id,
       });
       expect(step.fieldAdvice).toContain("loops");
@@ -1040,7 +1041,7 @@ describeIfDb("explicit create operations", () => {
         const item = await call("create_project", base("Release prep", "people-first"));
         const updated = await call("update_item", {
           id: item.id,
-          title: "Ship the 0.6.3 health fixes",
+          title: "Ship the 1.4.2 fixes",
         });
         expect(updated.titleAdvice).toContain("version");
       });

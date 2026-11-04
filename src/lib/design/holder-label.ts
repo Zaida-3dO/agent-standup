@@ -1,6 +1,6 @@
 // How the board names whoever holds an item.
 //
-// A person reads "Dana" or "an agent" - not the working name a crew or a
+// A person reads "user-a" or "an agent" - not the working name a crew or a
 // session happens to carry, which means nothing outside the code that hands
 // it out. The name stays on the record (and on operator screens such as the
 // fleet page, where it is the thing being managed); the surfaces a person
@@ -16,7 +16,7 @@ export function holderLabel(holder: {
   return holder.holderType === "agent" ? "an agent" : holder.displayName;
 }
 
-/** Several holders as one phrase: "Dana, an agent", with agents collapsed ("2 agents"). */
+/** Several holders as one phrase: "user-a, an agent", with agents collapsed ("2 agents"). */
 export function holdersLabel(
   holders: readonly { readonly holderType: string; readonly displayName: string }[],
 ): string {
