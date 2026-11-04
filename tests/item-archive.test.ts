@@ -1259,6 +1259,8 @@ describeIfDb("delete_item", () => {
         `UPDATE "Item" SET "state" = 'plan_review'::"ItemState" WHERE "id" = $1`,
         task.id,
       );
+      // A document entry on the task, so `doc_list` has a row it could leak.
+      await call("doc_patch", { itemId: task.id, doc: "progress", set: { note: "kept" } });
       await call("delete_item", {
         id: task.id,
         reason: GOOD_REASON,
@@ -1354,6 +1356,12 @@ describeIfDb("delete_item", () => {
         // item too, so an artifact id from elsewhere returns nothing rather
         // than reading across.
         "get_item_artifacts",
+        // Reads one item's document entries **by id**, the same shape and the
+        // same reason as the reads immediately above: it ranges over no set
+        // of items, so there is nothing for an archived row to leak *into*,
+        // and a document on an archived item is part of the record of it.
+        // `doc_list`, which does range over an item's children, is swept.
+        "doc_get",
         // Aggregates intervention firings per catalogue entry. It ranges
         // over `intervention_events` and `intervention_scores` and returns
         // counts keyed by entry id — the same "ranges over no items" reason
@@ -1483,6 +1491,10 @@ describeIfDb("delete_item", () => {
         // would be offered as a candidate to dispatch against.
         get_stale_candidates: { area: "archive-sweep", includeUnlanded: true },
         loop_list: { itemId: project.id },
+        // Ranges over a parent's children, so an archived child's documents
+        // must not come back through it. `doc_list` filters on the child's
+        // `archivedAt`, which this sweep's archived task would defeat.
+        doc_list: { parentId: project.id, doc: "progress" },
         list_areas: {},
         list_repos: {},
         list_people: {},
@@ -1551,6 +1563,7 @@ describeIfDb("delete_item", () => {
         "orientation",
         "progress_report",
         "repair_stuck_projects",
+        "doc_list",
       ]) {
         expect(swept, `${name} was not swept`).toContain(name);
       }

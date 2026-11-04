@@ -1,0 +1,12 @@
+-- `EventType`.'doc_change' — one write to an item's documents.
+--
+-- Added on its own, ahead of the table migration that follows, because
+-- Postgres refuses to use a new enum label in the transaction that adds it
+-- and each migration runs in one. Nothing here reads or writes the label.
+--
+-- Additive only. No existing row changes meaning and no backfill is
+-- performed: no earlier event was recording a document write under another
+-- type, so there is nothing to reinterpret. The emitter is `doc_patch`
+-- (`src/lib/service/operations/doc-patch.ts`), which is what
+-- `npm run check:event-emitters` requires of a new value.
+ALTER TYPE "EventType" ADD VALUE IF NOT EXISTS 'doc_change';

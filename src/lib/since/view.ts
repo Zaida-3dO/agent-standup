@@ -107,6 +107,8 @@ export function eventSummary(event: SinceEvent): string {
       return "escalated it";
     case "nudge":
       return "was nudged";
+    case "doc_change":
+      return "updated a document";
     default:
       return humanise(event.type);
   }

@@ -304,6 +304,12 @@ import { registerSession } from "./operations/register-session";
 // answers is decided by `ENABLE_BACKFILL`, and which adapters expose it is
 // decided by `../adapters/waivers.ts`.
 import { backfill } from "./operations/backfill";
+// Documents (docs/plans/SCHEMA.md §8c): keyed JSON entries attached to an
+// item, for anything too big, technical or agent-only for the fields a
+// person reads. Loaded on demand and absent from every item read.
+import { docPatch } from "./operations/doc-patch";
+import { docGet } from "./operations/doc-get";
+import { docList } from "./operations/doc-list";
 
 /**
  * Every service operation, by name.
@@ -422,6 +428,9 @@ export const OPERATION_REGISTRY = {
   [getSessionDetail.name]: getSessionDetail,
   [registerSession.name]: registerSession,
   [backfill.name]: backfill,
+  [docPatch.name]: docPatch,
+  [docGet.name]: docGet,
+  [docList.name]: docList,
 } as const satisfies Record<string, AnyOperation>;
 
 export type OperationRegistry = typeof OPERATION_REGISTRY;

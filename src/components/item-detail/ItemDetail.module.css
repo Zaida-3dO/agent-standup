@@ -739,6 +739,15 @@
   list-style: none;
 }
 
+/* The documents line(s) under the signposts: quiet, one per document. */
+.documents {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
 .signpost {
   display: flex;
   align-items: baseline;

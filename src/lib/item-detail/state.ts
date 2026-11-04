@@ -51,6 +51,7 @@ export async function fetchItemDetail(
     summary: detail.summary ?? null,
     assignments: detail.assignments ?? [],
     previousHolders: detail.previousHolders ?? [],
+    documents: detail.documents ?? [],
   };
 }
 

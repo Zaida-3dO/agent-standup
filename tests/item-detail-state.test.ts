@@ -77,6 +77,18 @@ describe("fetchItemDetail", () => {
     expect(detail.column).toBe("backlog");
   });
 
+  it("defaults the documents to none, and keeps the summaries the response carried", async () => {
+    const bare = await fetchItemDetail("item-1", stubFetch(200, { detail: { item: detailItem() } }));
+    expect(bare.documents).toEqual([]);
+
+    const documents = [{ doc: "progress", entries: 3, bytes: 900 }];
+    const carried = await fetchItemDetail(
+      "item-1",
+      stubFetch(200, { detail: { item: detailItem(), documents } }),
+    );
+    expect(carried.documents).toEqual(documents);
+  });
+
   it("keeps what the response did carry", async () => {
     const detail = await fetchItemDetail(
       "item-1",

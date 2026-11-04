@@ -849,3 +849,43 @@ describe("SummaryPanel", () => {
     expect(textOf(element)).toContain("the follow-up");
   });
 });
+
+describe("ItemDetailView — documents", () => {
+  const loaded = (overrides: Partial<ItemDetail>) =>
+    ({ status: "loaded", detail: detail(overrides) }) as const;
+
+  it("says one plain line per document on the overview", () => {
+    const element = ItemDetailView({
+      loadState: loaded({
+        documents: [
+          { doc: "plan", entries: 1, bytes: 420 },
+          { doc: "progress", entries: 31, bytes: 28_000 },
+        ],
+      }),
+      activeTab: "overview",
+    });
+    const text = textOf(element);
+    expect(text).toContain("plan: 1 entry, 420 bytes");
+    expect(text).toContain("progress: 31 entries, 28 KB");
+  });
+
+  it("shows nothing about documents when the item has none, or the response lacks the key", () => {
+    // Killed by rendering the list unconditionally: an empty list would leave
+    // an empty "Documents" element on every item without one.
+    for (const documents of [[], undefined]) {
+      const element = ItemDetailView({ loadState: loaded({ documents }), activeTab: "overview" });
+      const labelled = [...walk(element)].filter(
+        (el) => (el.props as Record<string, unknown>)["aria-label"] === "Documents",
+      );
+      expect(labelled).toHaveLength(0);
+    }
+  });
+
+  it("does not put documents on any other tab", () => {
+    const element = ItemDetailView({
+      loadState: loaded({ documents: [{ doc: "progress", entries: 2, bytes: 100 }] }),
+      activeTab: "activity",
+    });
+    expect(textOf(element)).not.toContain("progress: 2 entries");
+  });
+});
