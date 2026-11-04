@@ -32,18 +32,22 @@ import {
   resolveParent,
   subtreeOf,
 } from "../items/reparent-core";
-import { resolveInboxProject } from "../items/inbox-project";
-import { INBOX_PROJECT_ID } from "./create-task";
+import { assertNotInboxProject } from "./create-task";
 import { toItemWriteRecord, type ItemRecord, type ItemWriteRecord } from "../items/row";
 import { resolveItemId } from "../items/resolve-id";
+
+/** What a caller is told when a move is aimed at the Inbox. */
+const INBOX_MOVE_REFUSAL_MESSAGE =
+  "The Inbox does not take new work, so nothing was moved. Name the project this item belongs under: " +
+  "run `project list` to see the projects, then resend with `parentId` set to that project's id.";
 
 const inputSchema = z
   .object({
     /** The item to move. */
     id: z.string().trim().min(1, "id is required"),
     /**
-     * Where it moves to: an existing item's id, or the literal `"inbox"` for
-     * the configured inbox project.
+     * Where it moves to: an existing item's id. Never the Inbox — neither the
+     * literal `"inbox"` nor the Inbox project's id, which take no new work.
      *
      * `null` is a distinct, meaningful value — "make this a root", i.e. a
      * project — and is why the field is `nullable()` rather than optional. An
@@ -83,7 +87,7 @@ export const reparentItem = defineOperation({
   name: "reparent_item",
   kind: "write",
   summary:
-    'Moves an item to a different parent, re-deriving its kind and depth (and its descendants\' kinds) from where it lands. Pass parentId as an item id, the literal "inbox", or null to make it a top-level project. Refuses a cycle, a parent that does not exist or is in an archived area, and a move that would push the subtree past items.max_depth.',
+    'Moves an item to a different parent, re-deriving its kind and depth (and its descendants\' kinds) from where it lands. Pass parentId as an item id, or null to make it a top-level project. The Inbox takes no new work, so the literal "inbox" and the Inbox project id are refused. Refuses a cycle, a parent that does not exist or is in an archived area, and a move that would push the subtree past items.max_depth.',
   // Stryker restore all
   input: inputSchema,
   contract: {
@@ -99,6 +103,10 @@ export const reparentItem = defineOperation({
       {
         fields: ["parentId"],
         rule: "The new parent must exist and must not be in an archived area.",
+      },
+      {
+        fields: ["parentId"],
+        rule: 'The Inbox takes no new work: the literal "inbox" and the Inbox project id are refused as a parent. Run `project list` and name a real project.',
       },
     ],
     // Not the literal "inbox" in the worked example — see create_task's
@@ -143,29 +151,14 @@ export const reparentItem = defineOperation({
       return shape(await applyMove(ctx, { item, newParentId: null, newDepth: 0, subtree }));
     }
 
-    // `"inbox"` resolves the same way `create_task` resolves it, through the
-    // same function, so the sentinel means one thing in this system rather
-    // than one thing per operation. Resolved *before* the cycle check, not
-    // after: the inbox is an ordinary project row and could in principle be
-    // a descendant of the item being moved, and checking the sentinel string
-    // against a list of ids would never match.
     // A short id is resolved here and not at the top of the handler,
     // because `parentId` is only an item reference in this branch: the
-    // `null` case returned above, and `"inbox"` is a sentinel that is not
-    // an id at all and must reach `resolveInboxProject` unmodified. It is
-    // not id-shaped anyway (`isShortIdShape` refuses non-hex), so resolving
-    // it first would be a no-op rather than a bug — confirmed by mutation:
-    // hoisting the resolve above the sentinel check leaves the suite green.
-    // The ordering is therefore a readability choice, not a correctness one,
-    // and is written this way so "what is an id" is a decision this branch
-    // makes once rather than a property of the resolver's regex.
-    const parentId =
-      input.parentId === INBOX_PROJECT_ID
-        ? await resolveInboxProject(ctx, {
-            area: item.area,
-            originType: "auto",
-          })
-        : await resolveItemId(ctx.db, input.parentId, "parentId");
+    // `null` case returned above. `"inbox"` is not id-shaped
+    // (`isShortIdShape` refuses non-hex), so it passes through the resolver
+    // untouched and is refused by name below, together with the Inbox's own
+    // id — checked on the resolved id, so a short id cannot get past it.
+    const parentId = await resolveItemId(ctx.db, input.parentId, "parentId");
+    await assertNotInboxProject(ctx, parentId, INBOX_MOVE_REFUSAL_MESSAGE, "parentId");
 
     assertNoCycle({ newParentId: parentId, subtree, field: "parentId" });
 

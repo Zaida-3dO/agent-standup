@@ -62,10 +62,14 @@ import {
   resolveParent,
   subtreeOf,
 } from "../items/reparent-core";
-import { resolveInboxProject } from "../items/inbox-project";
-import { INBOX_PROJECT_ID } from "./create-task";
+import { assertNotInboxProject } from "./create-task";
 import { toItemWriteRecord, type ItemRecord, type ItemWriteRecord } from "../items/row";
 import { resolveItemId } from "../items/resolve-id";
+
+/** What a caller is told when a retype is aimed at the Inbox. */
+const INBOX_RETYPE_REFUSAL_MESSAGE =
+  "The Inbox does not take new work, so nothing was retyped. Name the project this task belongs under: " +
+  "run `project list` to see the projects, then resend with `projectId` set to that project's id.";
 
 const inputSchema = z
   .object({
@@ -110,7 +114,7 @@ export const retypeToTask = defineOperation({
   name: "retype_to_task",
   kind: "write",
   summary:
-    'Turns a childless project into a task under a project, so it has a state that can be transitioned. Pass projectId as a project id or the literal "inbox". The item keeps the state already on its row — nothing is invented. Refuses an item that is not a project, and refuses a project that still has children.',
+    'Turns a childless project into a task under a project, so it has a state that can be transitioned. Pass projectId as a project id; the Inbox takes no new work, so the literal "inbox" and the Inbox project id are refused. The item keeps the state already on its row — nothing is invented. Refuses an item that is not a project, and refuses a project that still has children.',
   // Stryker restore all
   input: inputSchema,
   contract: {
@@ -126,6 +130,10 @@ export const retypeToTask = defineOperation({
       {
         fields: ["projectId"],
         rule: "The new parent must exist, must not be in an archived area, and must not be the item itself.",
+      },
+      {
+        fields: ["projectId"],
+        rule: 'The Inbox takes no new work: the literal "inbox" and the Inbox project id are refused. Run `project list` and name a real project.',
       },
     ],
     // Not the literal "inbox" in the worked example — see create_task's
@@ -148,6 +156,10 @@ export const retypeToTask = defineOperation({
       ...input,
       id: await resolveItemId(ctx.db, input.id, "id"),
     };
+
+    // Refused before anything else is read, so the answer to "retype this
+    // into the Inbox" is the same whatever the item is.
+    await assertNotInboxProject(ctx, input.projectId, INBOX_RETYPE_REFUSAL_MESSAGE);
 
     const item = await loadItem(ctx, input.id);
 
@@ -177,10 +189,7 @@ export const retypeToTask = defineOperation({
     // and depth checks below run on the same shape they do for a move.
     const subtree = await subtreeOf(ctx, input.id);
 
-    const parentId =
-      input.projectId === INBOX_PROJECT_ID
-        ? await resolveInboxProject(ctx, { area: item.area, originType: "auto" })
-        : input.projectId;
+    const parentId = input.projectId;
 
     // Reachable only when a caller names the item itself. It has no
     // descendants — the check above proved that — so this is the self-move

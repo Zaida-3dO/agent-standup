@@ -15,6 +15,7 @@ import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot } from "@/lib/settings";
+import { resolveInboxProject } from "@/lib/service/items/inbox-project";
 import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
@@ -318,12 +319,15 @@ describeIfDb("item areas", () => {
   });
 
   describe("the auto-created inbox project carries its area", () => {
-    // New tasks are refused the Inbox, but an existing item can still be moved
-    // into it with `reparent_item`; that move mints the Inbox through the same
-    // resolver, so it is the way to reach it here.
-    async function intoInbox(title: string, area: string): Promise<{ id: string }> {
-      const stuck = await call("create_project", { ...base(title), area });
-      return (await call("reparent_item", { id: stuck.id, parentId: "inbox" })) as { id: string };
+    // Nothing in the service files work into the Inbox any more, so the
+    // resolver that mints it is called directly, with a context built here.
+    // `id` is the Inbox project's id.
+    async function intoInbox(_title: string, area: string): Promise<{ id: string }> {
+      const id = await resolveInboxProject(
+        { db: prisma, settings: defaultSnapshot(), caller: {}, operation: "test" },
+        { area, originType: "auto" },
+      );
+      return { id };
     }
 
     // The MEDIUM-1 regression, reproduced end to end through the public
@@ -337,16 +341,9 @@ describeIfDb("item areas", () => {
     // the `COALESCE`/`?? [row.area]` fallbacks make that read correct even
     // when the join table is empty, which is exactly why this survived.
     // The assertion has to go through `list_items`'s actual filter.
-    it("is findable by area filter after reparent_item(parentId: 'inbox') of an item in that area", async () => {
-      const task = await intoInbox("Filed to the inbox", "inbox-filter-area");
-
-      const inboxProjectId = await (async () => {
-        const rows = await prisma.$queryRawUnsafe<{ parentId: string | null }[]>(
-          `SELECT "parentId" FROM "Item" WHERE "id" = $1`,
-          task.id,
-        );
-        return rows[0]!.parentId!;
-      })();
+    it("is findable by area filter after the inbox is minted for an item in that area", async () => {
+      const inbox = await intoInbox("Filed to the inbox", "inbox-filter-area");
+      const inboxProjectId = inbox.id;
 
       // Fails if `resolveInboxProject` stops calling `setItemAreas` after
       // its insert: the inbox project would have `Item.area` set but no
@@ -367,34 +364,22 @@ describeIfDb("item areas", () => {
       // The inbox is a process-wide singleton found by title (see
       // `resolveInboxProject`'s own header on the find-or-create race), so
       // by the time this test runs another test in this suite has already
-      // minted it. That is exactly the case this test wants: call
-      // `reparent_item(parentId: "inbox")` again, with a DIFFERENT area, and
+      // minted it. That is exactly the case this test wants: resolve
+      // the inbox again, with a DIFFERENT area, and
       // confirm the inbox project's own area link is untouched — the write
       // only happens on the branch that actually inserts the project row.
       const first = await intoInbox(
         "Primes the inbox project for this test",
         "inbox-reuse-priming-area",
       );
-      const primedParentId = await (async () => {
-        const rows = await prisma.$queryRawUnsafe<{ parentId: string | null }[]>(
-          `SELECT "parentId" FROM "Item" WHERE "id" = $1`,
-          first.id,
-        );
-        return rows[0]!.parentId!;
-      })();
+      const primedParentId = first.id;
       const before = await linkedAreas(primedParentId);
 
       const second = await intoInbox(
         "Reuses the inbox project with a different area",
         "inbox-reuse-should-not-appear",
       );
-      const secondParentId = await (async () => {
-        const rows = await prisma.$queryRawUnsafe<{ parentId: string | null }[]>(
-          `SELECT "parentId" FROM "Item" WHERE "id" = $1`,
-          second.id,
-        );
-        return rows[0]!.parentId!;
-      })();
+      const secondParentId = second.id;
 
       expect(secondParentId).toBe(primedParentId);
       // Fails if `resolveInboxProject` called `setItemAreas` unconditionally

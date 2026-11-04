@@ -63,15 +63,17 @@ export const INBOX_REFUSAL_MESSAGE =
  * that is not archived).
  *
  * The id check is a read, so an unknown id falls through to the ordinary
- * "no such project" answer from the caller that owns it.
+ * "no such project" answer from the caller that owns it. `field` names the
+ * input the refusal points at, for operations that call it something else.
  */
 export async function assertNotInboxProject(
   ctx: ServiceContext,
   projectId: string,
   message: string = INBOX_REFUSAL_MESSAGE,
+  field: string = "projectId",
 ): Promise<void> {
   if (projectId === INBOX_PROJECT_ID) {
-    throw new InvalidInputError(message, { fields: ["projectId"] });
+    throw new InvalidInputError(message, { fields: [field] });
   }
   const rows = await ctx.db.$queryRawUnsafe<{ id: string }[]>(
     `SELECT "id" FROM "Item"
@@ -80,7 +82,7 @@ export async function assertNotInboxProject(
     ctx.settings.values["items.inbox_project"],
   );
   if (rows.length > 0) {
-    throw new InvalidInputError(message, { fields: ["projectId"] });
+    throw new InvalidInputError(message, { fields: [field] });
   }
 }
 

@@ -17,6 +17,7 @@ import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot, resolveSettings } from "@/lib/settings";
+import { resolveInboxProject } from "@/lib/service/items/inbox-project";
 import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
@@ -431,20 +432,53 @@ describeIfDb("reparenting and retyping", () => {
       expect(rejection.fields).toContain("id");
     });
 
-    // `"inbox"` means the same thing here as in `create_task` — resolved
-    // through the same function. Fails if the sentinel branch is removed:
-    // the literal string would be looked up as an id and refused
-    // `not_found`.
-    it('accepts the "inbox" sentinel and files the item under the inbox project', async () => {
+    // The Inbox takes no new work, so a move into it is refused just as a
+    // create is. Fails if the refusal is removed from the handler: the
+    // literal would resolve (or mint) the Inbox and the move would succeed.
+    it('refuses the "inbox" literal as a parent, and moves nothing', async () => {
       const stuck = await call("create_project", base("Inbox-bound"));
 
-      const moved = await call("reparent_item", { id: stuck.id, parentId: "inbox", full: true });
+      const rejection = await rejectionOf("reparent_item", { id: stuck.id, parentId: "inbox" });
 
-      expect(moved.kind).toBe("task");
-      expect(moved.parentId).not.toBeNull();
-      const parent = await rowOf(moved.parentId!);
-      expect(parent.kind).toBe("project");
-      expect(parent.parentId).toBeNull();
+      expect(rejection.code).toBe("invalid_input");
+      expect(rejection.fields).toEqual(["parentId"]);
+      expect(rejection.message).toMatch(/does not take new work/i);
+      expect(rejection.message).toContain("project list");
+      expect((await rowOf(stuck.id)).parentId).toBeNull();
+    });
+
+    // The id form is the way round the literal. Fails if only the literal is
+    // refused: moving by the Inbox project's own id would succeed.
+    it("refuses the Inbox project's id as a parent, full or short, and moves nothing", async () => {
+      const inboxId = await resolveInboxProject(
+        { db: prisma, settings: defaultSnapshot(), caller: {}, operation: "test" },
+        { area: "reparent", originType: "auto" },
+      );
+      const stuck = await call("create_project", base("Inbox-bound by id"));
+
+      for (const parentId of [inboxId, inboxId.slice(0, 8)]) {
+        const rejection = await rejectionOf("reparent_item", { id: stuck.id, parentId });
+        expect(rejection.code).toBe("invalid_input");
+        expect(rejection.fields).toEqual(["parentId"]);
+        expect(rejection.message).toMatch(/does not take new work/i);
+      }
+      expect((await rowOf(stuck.id)).parentId).toBeNull();
+    });
+
+    // The control: the refusal is about the Inbox, not about moves. A task
+    // under an ordinary project still moves to another ordinary project.
+    it("still moves an item to an ordinary project once the Inbox exists", async () => {
+      await resolveInboxProject(
+        { db: prisma, settings: defaultSnapshot(), caller: {}, operation: "test" },
+        { area: "reparent", originType: "auto" },
+      );
+      const from = await call("create_project", base("Ordinary source"));
+      const to = await call("create_project", base("Ordinary destination"));
+      const task = await call("create_task", { ...base("Movable"), projectId: from.id });
+
+      await call("reparent_item", { id: task.id, parentId: to.id });
+
+      expect((await rowOf(task.id)).parentId).toBe(to.id);
     });
   });
 
@@ -581,6 +615,54 @@ describeIfDb("reparenting and retyping", () => {
       });
       expect(rejection.code).toBe("not_found");
       expect(rejection.fields).toContain("projectId");
+    });
+  });
+
+  describe("retype_to_task into the Inbox", () => {
+    it('refuses the "inbox" literal as the project, and retypes nothing', async () => {
+      const stuck = await call("create_project", base("Retype to inbox"));
+
+      const rejection = await rejectionOf("retype_to_task", {
+        id: stuck.id,
+        projectId: "inbox",
+      });
+
+      expect(rejection.code).toBe("invalid_input");
+      expect(rejection.fields).toEqual(["projectId"]);
+      expect(rejection.message).toMatch(/does not take new work/i);
+      expect(rejection.message).toContain("project list");
+      expect((await rowOf(stuck.id)).kind).toBe("project");
+    });
+
+    it("refuses the Inbox project's id as the project, and retypes nothing", async () => {
+      const inboxId = await resolveInboxProject(
+        { db: prisma, settings: defaultSnapshot(), caller: {}, operation: "test" },
+        { area: "reparent", originType: "auto" },
+      );
+      const stuck = await call("create_project", base("Retype to inbox by id"));
+
+      const rejection = await rejectionOf("retype_to_task", {
+        id: stuck.id,
+        projectId: inboxId,
+      });
+
+      expect(rejection.code).toBe("invalid_input");
+      expect(rejection.fields).toEqual(["projectId"]);
+      expect(rejection.message).toMatch(/does not take new work/i);
+      const after = await rowOf(stuck.id);
+      expect(after.kind).toBe("project");
+      expect(after.parentId).toBeNull();
+    });
+
+    it("still retypes under an ordinary project", async () => {
+      const stuck = await call("create_project", base("Retype control"));
+      const home = await call("create_project", base("Retype control home"));
+
+      await call("retype_to_task", { id: stuck.id, projectId: home.id });
+
+      const after = await rowOf(stuck.id);
+      expect(after.kind).toBe("task");
+      expect(after.parentId).toBe(home.id);
     });
   });
 

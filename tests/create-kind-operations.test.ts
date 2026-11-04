@@ -18,6 +18,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { stubAuthEnvironment, withAuth } from "./helpers/authenticated-requests";
 import { ServiceRuntime, prismaTransactionRunner } from "@/lib/service";
 import { defaultSnapshot, resolveSettings } from "@/lib/settings";
+import type { SettingsSnapshot } from "@/lib/settings";
+import type { ServiceContext } from "@/lib/service/context";
+import { resolveInboxProject } from "@/lib/service/items/inbox-project";
 import { createTestPrismaClient } from "./helpers/test-prisma-client";
 import {
   createMigratedScratchDatabase,
@@ -269,24 +272,24 @@ describeIfDb("explicit create operations", () => {
     });
   });
 
-  // The Inbox still exists as a place existing items can be moved into
-  // (`reparent_item` with `parentId: "inbox"`); only creating new work there is
-  // refused. These cases pin the resolver that move goes through.
-  describe('reparent_item with parentId "inbox"', () => {
-    /** Files a fresh childless project under the Inbox, which makes it a task there. */
-    async function intoInbox(title: string, area: string, rt: ServiceRuntime = runtime) {
-      const stuck = (await rt.call("create_project", base(title, area))) as Created;
-      return (await rt.call("reparent_item", {
-        id: stuck.id,
-        parentId: "inbox",
-        full: true,
-      })) as Created;
+  // The Inbox takes no new work through any operation — `reparent_item` and
+  // `retype_to_task` refuse it too (see reparent-operations.test.ts) — so the
+  // find-or-create resolver is pinned directly, through a context built here.
+  describe("the inbox project resolver", () => {
+    /** Finds or mints the Inbox for an item in `area`, as an operation body would. */
+    async function intoInbox(
+      _title: string,
+      area: string,
+      settings: SettingsSnapshot = defaultSnapshot(),
+    ) {
+      const ctx: ServiceContext = { db: prisma, settings, caller: {}, operation: "test" };
+      const parentId = await resolveInboxProject(ctx, { area, originType: "auto" });
+      return { parentId };
     }
 
-    it("creates the inbox project on first use and files the task under it", async () => {
+    it("creates the inbox project on first use", async () => {
       const task = await intoInbox("Captured quickly", "inbox-area");
 
-      expect(task.kind).toBe("task");
       expect(task.parentId).not.toBeNull();
 
       const parent = await prisma.$queryRawUnsafe<{ title: string; kind: string }[]>(
@@ -358,13 +361,9 @@ describeIfDb("explicit create operations", () => {
     // resolved setting â€” the default-only test above cannot tell the two
     // apart, which is why this one exists.
     it("honours a configured inbox title from the settings snapshot", async () => {
-      const configured = new ServiceRuntime({
-        transaction: prismaTransactionRunner(prisma),
-        resolveSnapshot: async () =>
-          resolveSettings({
-            overrides: [{ key: "items.inbox_project", value: "Capture" }],
-            revision: 1n,
-          }),
+      const configured = resolveSettings({
+        overrides: [{ key: "items.inbox_project", value: "Capture" }],
+        revision: 1n,
       });
 
       const task = await intoInbox("Into the configured inbox", "configured-inbox", configured);

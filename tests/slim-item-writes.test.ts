@@ -587,21 +587,6 @@ describeIfDb("the slim write against Postgres", () => {
       expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
     });
 
-    // The `"inbox"` sentinel resolves its parent through a different function
-    // before reaching the same return, so it is exercised rather than assumed
-    // to be covered by the named-parent case.
-    it("stays slim when the parent is resolved from the inbox sentinel", async () => {
-      const created = await makeHeavyItem();
-      const result = (await runtime.call("reparent_item", {
-        id: created.id,
-        parentId: "inbox",
-      })) as unknown as Record<string, unknown>;
-      for (const field of HEAVY_FIELDS) {
-        expect(result).not.toHaveProperty(field);
-      }
-      expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
-    });
-
     // The bulk case the parent row describes, asserted as one number rather
     // than per call: emptying a project of heavily-briefed children used to
     // cost ~40k characters *per child*.
@@ -701,18 +686,6 @@ describeIfDb("the slim write against Postgres", () => {
         expect(result).toHaveProperty(field);
       }
       expect(result.body).toHaveLength(20_000);
-    });
-
-    it("stays slim when the parent is resolved from the inbox sentinel", async () => {
-      const stuck = await makeHeavyProject("Stuck, inbox-bound");
-      const result = (await runtime.call("retype_to_task", {
-        id: stuck.id,
-        projectId: "inbox",
-      })) as unknown as Record<string, unknown>;
-      for (const field of HEAVY_FIELDS) {
-        expect(result).not.toHaveProperty(field);
-      }
-      expect(wireSize(result)).toBeLessThan(SLIM_WRITE_CEILING);
     });
 
     // The guard that refuses a project with children is the operation's

@@ -353,23 +353,17 @@ describeIfDb("resolving a short id against Postgres", () => {
     expect(error.fields).toEqual(["parentId"]);
   });
 
-  it("leaves the inbox sentinel alone rather than treating it as an id", async () => {
+  it("refuses the inbox sentinel by name rather than treating it as an id", async () => {
     const { id } = await createItem("bound for the inbox");
     // "inbox" is not hex, so `isShortIdShape` refuses it and the resolver
-    // hands it back untouched. Fails if the resolver's shape test stops
-    // excluding non-hex text, which would send the sentinel into the prefix
-    // scan and break every create/reparent that uses it.
-    //
-    // Honest limit, established by mutation rather than assumed: this does
-    // NOT pin the *ordering* of the sentinel branch against the resolve.
-    // Moving the resolve above the sentinel check leaves all 20 tests green,
-    // because on a non-hex reference the resolver is a no-op. The ordering
-    // in the source is therefore a readability choice, documented as such
-    // there, and not a behaviour this suite can defend.
-    const moved = (await runtime.call("reparent_item", { id, parentId: "inbox" })) as {
-      id: string;
-    };
-    expect(moved.id).toBe(id);
+    // hands it back untouched; the move then refuses it as the Inbox. Fails
+    // if the shape test stops excluding non-hex text, which would send the
+    // sentinel into the prefix scan and change the refusal to a `not_found`.
+    const error = await rejectionOf(runtime.call("reparent_item", { id, parentId: "inbox" }));
+    expect(isServiceError(error)).toBe(true);
+    if (!isServiceError(error)) throw new Error("unreachable");
+    expect(error.code).toBe("invalid_input");
+    expect(error.fields).toEqual(["parentId"]);
   });
 
   it("still refuses a non-id string the way it always did", async () => {
