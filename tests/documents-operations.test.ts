@@ -34,6 +34,11 @@ import { createTestPrismaClient } from "./helpers/test-prisma-client";
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
+/** `JSON.stringify` replacer: ledger ids are bigints, which it cannot serialise on its own. */
+function bigintToString(_key: string, value: unknown): unknown {
+  return typeof value === "bigint" ? value.toString() : value;
+}
+
 interface ServiceError {
   code: string;
   guard?: string;
@@ -183,7 +188,7 @@ describeIfDb("documents, against Postgres", () => {
       const events = await docEvents(itemId);
       expect(events).toHaveLength(2);
       for (const event of events) {
-        expect(JSON.stringify(event)).not.toContain("SENTINEL");
+        expect(JSON.stringify(event, bigintToString)).not.toContain("SENTINEL");
         expect(event.body).toBeNull();
         expect(event.headline).toBeNull();
       }
@@ -195,7 +200,7 @@ describeIfDb("documents, against Postgres", () => {
         `SELECT "payload" FROM "Event" WHERE "itemId" = $1`,
         itemId,
       );
-      expect(JSON.stringify(all)).not.toContain("SENTINEL");
+      expect(JSON.stringify(all, bigintToString)).not.toContain("SENTINEL");
     });
 
     it("changes only the keys it names and leaves every other key alone", async () => {
