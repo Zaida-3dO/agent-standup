@@ -116,6 +116,7 @@ describeIfDb("the delivery-flow queries — against Postgres", () => {
     findings?: unknown;
     followUpItemId?: string;
     reviewRound?: number;
+    body?: string;
   }): Promise<void> {
     await prisma.artifact.create({
       data: {
@@ -124,9 +125,24 @@ describeIfDb("the delivery-flow queries — against Postgres", () => {
         ...(options.verdict === undefined ? {} : { verdict: options.verdict as never }),
         ...(options.findings === undefined ? {} : { findings: options.findings as never }),
         ...(options.followUpItemId === undefined ? {} : { followUpItemId: options.followUpItemId }),
+        ...(options.body === undefined ? {} : { body: options.body }),
         reviewRound: options.reviewRound ?? 1,
         createdByType: "agent",
         createdById: "agent-a",
+      },
+    });
+  }
+
+  /** A note on an item — the shape `record {action: "note"}` writes. */
+  async function note(itemId: string, body: string | null): Promise<void> {
+    await prisma.event.create({
+      data: {
+        itemId,
+        actorType: "agent",
+        actorId: "agent-a",
+        type: "note",
+        payload: {},
+        ...(body === null ? {} : { body }),
       },
     });
   }
@@ -310,6 +326,91 @@ describeIfDb("the delivery-flow queries — against Postgres", () => {
       });
 
       expect((await contextFor("s1")).untrackedNits).toBeUndefined();
+    });
+
+    // ── The two answers `followUpItemId` cannot record ────────────────
+    //
+    // The message names three acceptable answers — "actioned in this
+    // change, minted as an item, or judged not worth doing" — and the
+    // column records only the middle one. Without the other two, a session
+    // that answered in prose was told again that it had been silent: the
+    // entry fired on the `commit` artifact whose body said where the
+    // finding went, and again on the `note` whose entire content was the
+    // answer, with the same findingCount and reviewRound both times.
+    //
+    // Mutation that breaks these two: deleting `if (row.hasAnswer) return
+    // {};` from `untrackedNitsFor`, which restores the repeat.
+    it("stays silent once a note recorded after the review answers it", async () => {
+      const item = await createItem("merged");
+      await claim("s1", item);
+      await artifact({
+        itemId: item,
+        kind: "code_review",
+        verdict: "lgtm_with_nits",
+        findings: NITS,
+      });
+
+      expect((await contextFor("s1")).untrackedNits).toEqual({ findingCount: 2, reviewRound: 1 });
+
+      await note(item, "Both nits actioned in 7b2edf4; no row minted because the fix shipped.");
+
+      expect((await contextFor("s1")).untrackedNits).toBeUndefined();
+    });
+
+    it("stays silent once an artifact recorded after the review answers it", async () => {
+      const item = await createItem("merged");
+      await claim("s1", item);
+      await artifact({
+        itemId: item,
+        kind: "code_review",
+        verdict: "lgtm_with_nits",
+        findings: NITS,
+      });
+      await artifact({
+        itemId: item,
+        kind: "commit",
+        body: "Fixes both nits from round 1.",
+      });
+
+      expect((await contextFor("s1")).untrackedNits).toBeUndefined();
+    });
+
+    // Ordering is the whole claim: a write that PREDATES the review cannot
+    // be an answer to it. Without the timestamp comparison any item with
+    // prior history would silence the entry permanently.
+    //
+    // Mutation that breaks it: `e."ts" > g."createdAt"` -> `>=` is too weak
+    // to catch; dropping the comparison entirely is what this kills.
+    it("still fires when the only prose predates the review", async () => {
+      const item = await createItem("merged");
+      await claim("s1", item);
+      await note(item, "Starting work on this.");
+      await artifact({
+        itemId: item,
+        kind: "code_review",
+        verdict: "lgtm_with_nits",
+        findings: NITS,
+      });
+
+      expect((await contextFor("s1")).untrackedNits).toEqual({ findingCount: 2, reviewRound: 1 });
+    });
+
+    // A bodyless event is a state change, not an answer. Counting it would
+    // let an ordinary transition silence the entry.
+    //
+    // Mutation that breaks it: dropping `e."body" IS NOT NULL`.
+    it("does not treat a bodyless event as an answer", async () => {
+      const item = await createItem("merged");
+      await claim("s1", item);
+      await artifact({
+        itemId: item,
+        kind: "code_review",
+        verdict: "lgtm_with_nits",
+        findings: NITS,
+      });
+      await note(item, null);
+
+      expect((await contextFor("s1")).untrackedNits).toEqual({ findingCount: 2, reviewRound: 1 });
     });
 
     // `Verdict` is a column on `Artifact` generally rather than on reviews

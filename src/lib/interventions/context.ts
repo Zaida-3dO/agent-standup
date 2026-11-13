@@ -1295,21 +1295,41 @@ async function untrackedNitsFor(
       reviewRound: number | null;
       verdict: string | null;
       hasFollowUp: boolean;
+      hasAnswer: boolean;
     }[]
   >(
-    `SELECT CASE
-              WHEN jsonb_typeof("findings") = 'array' THEN jsonb_array_length("findings")
+    `WITH governing AS (
+       SELECT "id", "createdAt", "seq", "findings", "reviewRound", "verdict", "followUpItemId"
+         FROM "Artifact"
+        WHERE "itemId" = $1
+          AND "verdict" IS NOT NULL
+          AND "kind"::text IN ('code_review', 'visual_review', 'plan_review')
+        ORDER BY "createdAt" DESC, "seq" DESC
+        LIMIT 1
+     )
+     SELECT CASE
+              WHEN jsonb_typeof(g."findings") = 'array' THEN jsonb_array_length(g."findings")
               ELSE 0
-            END::int                          AS "findingCount",
-            "reviewRound"                     AS "reviewRound",
-            "verdict"::text                   AS "verdict",
-            ("followUpItemId" IS NOT NULL)    AS "hasFollowUp"
-       FROM "Artifact"
-      WHERE "itemId" = $1
-        AND "verdict" IS NOT NULL
-        AND "kind"::text IN ('code_review', 'visual_review', 'plan_review')
-      ORDER BY "createdAt" DESC, "seq" DESC
-      LIMIT 1`,
+            END::int                            AS "findingCount",
+            g."reviewRound"                     AS "reviewRound",
+            g."verdict"::text                   AS "verdict",
+            (g."followUpItemId" IS NOT NULL)    AS "hasFollowUp",
+            (
+              EXISTS (
+                SELECT 1 FROM "Event" e
+                 WHERE e."itemId" = $1
+                   AND e."type"::text IN ('note', 'checkpoint')
+                   AND e."body" IS NOT NULL
+                   AND e."ts" > g."createdAt"
+              )
+              OR EXISTS (
+                SELECT 1 FROM "Artifact" a
+                 WHERE a."itemId" = $1
+                   AND a."body" IS NOT NULL
+                   AND (a."createdAt", a."seq") > (g."createdAt", g."seq")
+              )
+            )                                   AS "hasAnswer"
+       FROM governing g`,
     itemId,
   );
 
@@ -1325,6 +1345,44 @@ async function untrackedNitsFor(
   // the reviewer who already did it is how a guard teaches its users to
   // ignore it.
   if (row.hasFollowUp) return {};
+  // ── The other two answers, which this entry asks for by name ──────────
+  //
+  // The message offers three answers — *"actioned in this change, minted as
+  // an item, or judged not worth doing"* — and `followUpItemId` records
+  // exactly one of them, the middle. The other two are prose, so they are
+  // detected here instead. Without this an item answering either way is
+  // told again that it was silent: the entry fires on the `commit` artifact
+  // whose body says where the finding went, and again on the `note` whose
+  // entire content is the answer, with the same `findingCount` and the same
+  // `reviewRound` both times.
+  //
+  // That is worse than noise, and the entry's own prominent text says why:
+  // it argues that *"if recording them is consistently this manual, that is
+  // the reason reviewers inflate severities to make findings survive."* A
+  // nudge that repeats after you comply adds the cost of answering without
+  // the payoff of being seen to have answered, which leaves inflating the
+  // severity and ignoring the channel as the two responses that work.
+  //
+  // ── Why a write after the review counts, without reading it ───────────
+  //
+  // Anything recorded *after* the governing review is a deliberate act on a
+  // row whose only outstanding question is this one. Matching on content
+  // was rejected: it would have this entry grading prose, guess wrong in
+  // both directions, and quietly make a keyword the price of silence.
+  //
+  // The trade is stated rather than hidden. This accepts an unrelated note
+  // as an answer, so a session that reviews, writes about something else
+  // and merges is not nudged. That direction is the right one to err in —
+  // the entry is `immediate`, fires on a *closing* row, and its own header
+  // records the same judgement about follow-up rows: demanding proof
+  // "would push callers to mint bookkeeping rows for nits they had already
+  // fixed, which is how a guard teaches its users to route around it." A
+  // missed nudge costs one finding aging out; a repeating one costs the
+  // channel.
+  //
+  // `body IS NOT NULL` is what keeps a bare state transition or an empty
+  // event from counting: the answer has to be something somebody wrote.
+  if (row.hasAnswer) return {};
   if (row.findingCount < 1) return {};
   return {
     untrackedNits: {

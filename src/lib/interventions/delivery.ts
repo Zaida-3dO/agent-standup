@@ -160,6 +160,21 @@ export interface DeliveryOptions {
   readonly sessionId?: string;
   /** What this call triggered, already evaluated by the registry. */
   readonly findings?: readonly InterventionFinding[];
+  /**
+   * Whether `findings` is an **exhaustive** evaluation of everything that
+   * could ride this digest, rather than whatever one call's context could
+   * answer.
+   *
+   * Only an exhaustive evaluation is allowed to retire a held finding: a
+   * situation absent from it has genuinely resolved, where a situation
+   * absent from a partial one may simply never have been asked about. See
+   * `withoutResolved` for the two producers this distinguishes and why
+   * conflating them loses real findings.
+   *
+   * Optional, and absent means "partial" — so every caller that predates
+   * this keeps the behaviour it had.
+   */
+  readonly reEvaluated?: boolean;
   /** The moment of the call, in epoch milliseconds. Supplied, never read. */
   readonly now: number;
 }
@@ -212,8 +227,78 @@ export function decideDelivery(
 
   return {
     ...(nowDelivered.length === 0 ? {} : { findings: nowDelivered }),
-    ...(digest === null ? {} : { digest }),
+    ...(digest === null ? {} : { digest: withoutResolved(digest, options) }),
   };
+}
+
+/**
+ * Drops findings from a batch whose situation the caller re-checked and
+ * found resolved.
+ *
+ * ── The defect this fixes ──────────────────────────────────────────────
+ *
+ * A digest finding is evaluated when it is *noticed* and delivered up to
+ * `DEFAULT_DIGEST_INTERVAL_MS` later, and nothing between those two moments
+ * asked whether it was still true. So a session that noticed a situation,
+ * fixed it, and kept working was told about the fixed situation as though
+ * it were current — with no call left to make that would satisfy it.
+ *
+ * Observed, with server-assigned timestamps: a `commit` artifact at
+ * 22:21:13 put `committed-with-no-pull-request` in the batch truthfully (at
+ * that instant there was no pull request); a `pull_request` artifact at
+ * 22:21:40 resolved it; the batch was delivered at 22:26:43 — 5m03s later,
+ * against a 5m00s interval — still carrying it. The reporter re-verified
+ * the pull request existed and re-read their own artifact ids before
+ * feeling entitled to dismiss it. **That verification tax is the cost of a
+ * nudge that asks for work already done**, and it is what teaches sessions
+ * to discount a channel that fails open and so relies entirely on being
+ * taken seriously.
+ *
+ * ── Why this needs `reEvaluated` and cannot just read `findings` ───────
+ *
+ * The obvious version — treat this call's findings as the set of things
+ * still true, and drop anything missing from it — is **wrong on the hook
+ * path**, and the existing suite catches it. `decideDelivery` serves two
+ * producers that evaluate different amounts:
+ *
+ *   - `./service-producer.ts` evaluates **every** `post` entry against a
+ *     fully-assembled context, on every write. There, absence from the
+ *     result genuinely means the predicate declined.
+ *   - The hook path evaluates what one tool call's context can answer. A
+ *     finding held from an earlier call is routinely absent there simply
+ *     because this call never asked, and dropping it would lose a real
+ *     finding — the "batch accumulates across calls" property.
+ *
+ * So the *producer* declares whether its evaluation was exhaustive, and
+ * only an exhaustive one is allowed to retire a held finding. A caller that
+ * declares nothing retires nothing, which is what keeps a partial
+ * evaluation from dropping a finding it never asked about.
+ *
+ * **This is deliberately not a second predicate.** Re-running the entries
+ * here would need a database handle the delivery path pointedly does not
+ * have (`DeliveryOptions` documents why: "a delivery that could fetch would
+ * eventually fetch, and it runs on every service call"). Filtering against
+ * an evaluation somebody else already paid for adds no query, no handle and
+ * no clock read.
+ *
+ * ── An exhaustive evaluation that found nothing still counts ───────────
+ *
+ * `reEvaluated: true` with an empty `findings` is the *most* informative
+ * case there is: the producer ran every entry and none triggered, so every
+ * held finding has resolved. That is exactly the reported sequence, where
+ * the pull request had been recorded and nothing else was wrong. Reading it
+ * as "did not look" would leave the defect unfixed in the precise case it
+ * was reported for — which is why the flag is a separate field rather than
+ * inferred from the array being non-empty.
+ */
+function withoutResolved(digest: DigestBatch, options: DeliveryOptions): DigestBatch {
+  if (options.reEvaluated !== true) return digest;
+
+  const stillTrue = new Set((options.findings ?? []).map((finding) => finding.id));
+  const kept = digest.findings.filter((finding) => stillTrue.has(finding.id));
+
+  if (kept.length === digest.findings.length) return digest;
+  return { ...digest, findings: kept };
 }
 
 /**
